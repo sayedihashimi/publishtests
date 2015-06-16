@@ -1,22 +1,12 @@
 ﻿[cmdletbinding()]
 param()
 
+Set-StrictMode -Version Latest
+
 function InternalGet-ScriptDirectory{
     split-path (((Get-Variable MyInvocation -Scope 1).Value).MyCommand.Path)
 }
 $scriptDir = ((InternalGet-ScriptDirectory) + "\")
-
-[System.IO.FileInfo]$samplewapproj = (Join-Path $scriptDir 'samples\src\WapMvc46\WapMvc46.csproj')
-[System.IO.FileInfo]$samplednxproj = (Join-Path $scriptDir 'samples\src\DnxWebApp\DnxWebApp.xproj')
-
-$sites = @(
-    New-SiteObject -name publishtestwap -projectpath $samplewapproj -projectType WAP
-    New-SiteObject -name publishtestdnx-clr-withsource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $true
-    New-SiteObject -name publishtestdnx-coreclr-withsource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $true
-    New-SiteObject -name publishtestdnx-clr-nosource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false
-    New-SiteObject -name publishtestdnx-coreclr-nosource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $false
-)
-
 
 function Ensure-AzurePowerShellImported{
     [cmdletbinding()]
@@ -91,7 +81,7 @@ function New-SiteObject{
 function Populate-AzureWebSiteObjects{
     [cmdletbinding()]
     param(
-        [Parameter(Mandatory=$true,Position=0)]
+        [Parameter(Mandatory=$true,Position=0,ValueFromPipeline=$true)]
         [ValidateNotNull()]
         [object[]]$site
     )
@@ -130,13 +120,21 @@ function Delete-RemoteSiteContent{
         foreach($siteobj in $site){
             # $siteobj.AzureSiteObj
             
+            $azuresite = $siteobj.AzureSiteObj
             # first stop the site
-            Stop-AzureWebsite ($siteobj.AzureSiteObj.Name)
+            Stop-AzureWebsite ($azuresite.Name)
 
             # delete the files in the remote
 
             # msdeploy.exe -verb:delete -dest:contentPath=sayed03/,ComputerName='https://sayed03.scm.azurewebsites.net/msdeploy.axd',UserName='$sayed03',Password='%pubpwd%',IncludeAcls='False',AuthType='Basic' -whatif
             # todo: finish here
+
+            $username = ($azuresite.SiteProperties.Properties|%{ if($_.Name -eq 'PublishingUsername'){$_.Value} })
+            $pubpwd = ($azuresite.SiteProperties.Properties|%{ if($_.Name -eq 'PublishingPassword'){$_.Value} })
+            $msdeployurl = ('{0}/msdeploy.axd' -f ($azuresite.SiteProperties.Properties|%{ if($_.Name -eq 'RepositoryUri'){$_.Value} }) )
+            $destarg = ('contentPath={0}/,ComputerName=''{1}'',UserName=''{2}'',Password=''{3}'',IncludeAcls=''False'',AuthType=''Basic'' -whatif' -f $azuresite.Name, $msdeployurl, $username,$pubpwd )
+            $msdeployargs = @('-verb:delete',('-dest:{0}' -f $destarg),'-whatif')
+            Invoke-CommandString -command (Get-MSDeploy) -commandArgs $msdeployargs
         }
     }
 }
@@ -160,7 +158,7 @@ function Load-PublishModule{
 function Ensure-NuGetPowerShellIsLoaded{
     [cmdletbinding()]
     param(
-        $nugetPsMinModVersion = $global:alfredsettings.NuGetPowerShellMinModuleVersion
+        $nugetPsMinModVersion = '0.2.3.1'
     )
     process{
         # see if nuget-powershell is available and load if not
@@ -231,9 +229,31 @@ function Initialize{
         Load-PublishModule
 
         $sites | Ensure-SiteExists
-        Populate-AzureWebSiteObjects
+        $sites | Populate-AzureWebSiteObjects
+
+        $sites | Delete-RemoteSiteContent
     }
 }
 
 # begin script
+
+[System.IO.FileInfo]$samplewapproj = (Join-Path $scriptDir 'samples\src\WapMvc46\WapMvc46.csproj')
+[System.IO.FileInfo]$samplednxproj = (Join-Path $scriptDir 'samples\src\DnxWebApp\DnxWebApp.xproj')
+
+$sites = @(
+    New-SiteObject -name publishtestwap -projectpath $samplewapproj -projectType WAP
+    New-SiteObject -name publishtestdnx-clr-withsource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $true
+    New-SiteObject -name publishtestdnx-coreclr-withsource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $true
+    New-SiteObject -name publishtestdnx-clr-nosource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false
+    New-SiteObject -name publishtestdnx-coreclr-nosource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $false
+)
+
+
+try{
+    Initialize
+}
+catch{
+    $msg = $_.Exception.ToString()
+    $msg | Write-Error
+}
 
