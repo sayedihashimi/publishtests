@@ -14,6 +14,8 @@ Project("{8BB2217D-0F2D-49D1-97BC-3654ED321F3B}") = "DnxWebApp", "src\DnxWebApp\
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WapMvc46", "src\WapMvc46\WapMvc46.csproj", "{898660B7-7E5C-4FC9-9B7E-610BEE7D27AB}"
 EndProject
+Project("{8BB2217D-0F2D-49D1-97BC-3654ED321F3B}") = "DnxEmpty", "src\DnxEmpty\DnxEmpty.xproj", "{4B1F38E6-CE07-4AC7-AB6D-B9B7A7C427AD}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -28,6 +30,10 @@ Global
 		{898660B7-7E5C-4FC9-9B7E-610BEE7D27AB}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{898660B7-7E5C-4FC9-9B7E-610BEE7D27AB}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{898660B7-7E5C-4FC9-9B7E-610BEE7D27AB}.Release|Any CPU.Build.0 = Release|Any CPU
+		{4B1F38E6-CE07-4AC7-AB6D-B9B7A7C427AD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4B1F38E6-CE07-4AC7-AB6D-B9B7A7C427AD}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4B1F38E6-CE07-4AC7-AB6D-B9B7A7C427AD}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4B1F38E6-CE07-4AC7-AB6D-B9B7A7C427AD}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -35,5 +41,6 @@ Global
 	GlobalSection(NestedProjects) = preSolution
 		{EEF41617-6828-4D79-871F-0259A544C66C} = {E4EFD9F6-BF78-4239-B76F-BE3AB010FFE2}
 		{898660B7-7E5C-4FC9-9B7E-610BEE7D27AB} = {E4EFD9F6-BF78-4239-B76F-BE3AB010FFE2}
+		{4B1F38E6-CE07-4AC7-AB6D-B9B7A7C427AD} = {E4EFD9F6-BF78-4239-B76F-BE3AB010FFE2}
 	EndGlobalSection
 EndGlobal
