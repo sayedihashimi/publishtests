@@ -8,6 +8,47 @@ function InternalGet-ScriptDirectory{
 }
 $scriptDir = ((InternalGet-ScriptDirectory) + "\")
 
+[System.IO.FileInfo]$dnvmpath = (Join-Path $env:USERPROFILE '.dnx\bin\dnvm.cmd')
+$dnxversion = '1.0.0-beta4'
+$originalpath = $env:Path
+
+# http://blogs.technet.com/b/heyscriptingguy/archive/2011/07/23/use-powershell-to-modify-your-environmental-path.aspx
+function Add-Path{
+    [Cmdletbinding()]
+    param
+    (
+        [parameter(Mandatory=$True,
+        ValueFromPipeline=$True,
+        Position=0)]
+        [String[]]$AddedFolder
+    )
+
+    # Get the current search path from the environment keys in the registry.
+
+    $OldPath=$ENV:PATH
+
+    # See if a new folder has been supplied.
+
+    if (!$AddedFolder){ Return ‘No Folder Supplied. $ENV:PATH Unchanged’}
+
+    # See if the new folder exists on the file system.
+
+    if (!(TEST-PATH $AddedFolder)){ Return ‘Folder Does not Exist, Cannot be added to $ENV:PATH’ }
+
+    # See if the new Folder is already in the path.
+
+    if ($ENV:PATH | Select-String -SimpleMatch $AddedFolder){ Return ‘Folder already within $ENV:PATH' }
+
+    # Set the New Path
+    $NewPath=$OldPath+’;’+$AddedFolder
+
+    $ENV:PATH = $NewPath
+
+    [Environment]::SetEnvironmentVariable('path',$NewPath,[EnvironmentVariableTarget]::Process)
+
+    return $NewPath
+}
+
 function Ensure-AzurePowerShellImported{
     [cmdletbinding()]
     param()
@@ -46,14 +87,17 @@ function New-SiteObject{
         [string]$projectType = 'DNX',
 
         [Parameter(Position=3)]
+        [string]$dnxversion = $script:dnxversion,
+
+        [Parameter(Position=4)]
         [ValidateSet('x86','x64')]
         [string]$dnxbitness = 'x86',
 
-        [Parameter(Position=4)]
+        [Parameter(Position=5)]
         [ValidateSet('clr','coreclr')]
         [string]$dnxruntime='clr',
 
-        [Parameter(Position=5)]
+        [Parameter(Position=6)]
         [bool]$dnxpublishsource = $true
 
     )
@@ -62,6 +106,7 @@ function New-SiteObject{
             Name = $name
             ProjectPath = $projectpath
             ProjectType = $projectType
+            DnxVersion = $dnxversion
             DnxBitness = $null
             DnxRuntime = $null
 
@@ -110,6 +155,89 @@ function Ensure-SiteExists{
     }
 }
 
+function Publish-Site{
+    [cmdletbinding()]
+    param(
+        [Parameter(Position=0,ValueFromPipeline=$true)]
+        [object[]]$site
+    )
+    process{
+        # figure out if its dnx or a standard wap
+        foreach($siteobj in $site){
+            if($siteobj.ProjectType -eq 'DNX'){
+                Publish-DnxSite -site $siteobj
+            }
+            elseif($siteobj.ProjectType -eq 'WAP'){
+                Publish-WapSite -site $siteobj
+            }
+        }
+    }
+}
+
+function Publish-DnxSite{
+    [cmdletbinding()]
+    param(
+        [Parameter(Position=0,ValueFromPipeline=$true)]
+        [object[]]$site
+    )
+    process{
+        foreach($siteobj in $site){
+            # reset path to the original value
+            $env:path = $originalpath
+
+            if($siteobj -eq $null){
+                continue
+            }
+
+            if($siteobj.ProjectType -eq 'DNX'){
+                'Publishing DNX project at [{0}] to [{1}]' -f $siteobj.projectpath,$siteobj.Name | Write-Verbose
+                # need to set dnx for the project
+                $dnxstring = ('{0}' -f $dnxversion)
+
+                # command: dnvm install 1.0.0-beta4 -arch x86 -runtime clr
+                $cmdargs = @('install',$siteobj.DnxVersion,'-arch',$siteobj.DnxBitness,'-runtime',$siteobj.DnxRuntime)
+                'Installing dnvm for site [{0}]' -f $siteobj.Name | Write-Verbose
+                Invoke-CommandString -command ($dnvmpath.FullName) -commandArgs $cmdargs
+
+                # set this as active dnvm
+                $cmdargs = @('use',$siteobj.DnxVersion,'-arch',$siteobj.DnxBitness,'-runtime',$siteobj.DnxRuntime)
+                Invoke-CommandString -command ($dnvmpath.FullName) -commandArgs $cmdargs
+
+                # add dnx bin to the path C:\Users\sayedha\.dnx\runtimes\dnx-clr-win-x64.1.0.0-beta4\bin
+                $dnxbin = (Join-Path $env:USERPROFILE ('.dnx\runtimes\dnx-{0}-win-{1}.{2}\bin' -f $siteobj.DnxRuntime,$siteobj.DnxBitness,$dnxstring))
+                if(-not (Test-Path $dnxbin)){
+                    throw ('dnx bin not found at [{0}]' -f $dnxbin)
+                }
+
+                Add-Path $dnxbin
+
+                # call publish to a temp folder
+                $tempfolder = (Join-Path ([System.IO.Path]::GetTempPath()) ('{0}-{1}' -f $siteobj.Name,[Guid]::NewGuid()) )
+                if(Test-Path $tempfolder){
+                    Remove-Item $tempfolder -Recurse
+                }
+
+                New-Item -ItemType Directory -Path $tempfolder
+
+            }
+            else{
+                throw ('Unable to publish site with project type [{0}], expected ''DNX''' -f $siteobj.ProjectType)
+            }
+        }
+    }
+}
+
+function Publish-WapSite{
+    [cmdletbinding()]
+    param(
+        [object[]]$site
+    )
+    process{
+        foreach($siteobj in $site){
+        }
+    }
+}
+
 function Delete-RemoteSiteContent{
     [cmdletbinding()]
     param(
@@ -118,9 +246,8 @@ function Delete-RemoteSiteContent{
     )
     process{
         foreach($siteobj in $site){
-            # $siteobj.AzureSiteObj
-            
             $azuresite = $siteobj.AzureSiteObj
+            'Deleting files for site [{0}]' -f $azuresite.Name | Write-Verbose
             # first stop the site
             Stop-AzureWebsite ($azuresite.Name)
 
@@ -219,10 +346,57 @@ function Invoke-CommandString{
     }
 }
 
-function Initialize{
+function Ensure-DnvmInstalled{
     [cmdletbinding()]
     param()
     process{
+        # (Join-Path $env:USERPROFILE '.dnx\bin\dnvm.ps1')
+        if(-not (Test-Path $dnvmpath)){
+            throw ('Unable to find dnvm at [{0}]' -f $dnvmpath.FullName)
+        }
+    }
+}
+
+function Ensure-ClientToolsInstalled{
+    [cmdletbinding()]
+    param()
+    process{
+        $nodeexe = "$env:ProgramFiles\nodejs\node.exe"
+        if(Test-Path $nodeexe){
+            Set-Alias node $nodeexe
+
+            Add-Path "$env:ProgramFiles\nodejs\"
+        }
+        else{
+            throw ('Unable to find node.exe at [{0}]' -f $nodeexe)
+        }
+
+        $npmexe = "$env:ProgramFiles\nodejs\npm.cmd"
+        if(Test-Path $npmexe){
+            Set-Alias node $npmexe
+        }
+        else{
+            throw ('Unable to find npm.exe at [{0}]' -f $npmexe)
+        }
+
+        if(-not (Test-Path env:NODE_PATH)){
+            $nodepath = "$env:APPDATA\npm\node_modules\"
+            if(Test-Path $nodepath){
+                $env:NODE_PATH = $nodepath
+            }
+            else{
+                throw ('Unable to find node path at [{0}]' -f $nodepath)
+            }
+        }
+    }
+}
+
+function Initalize{
+    [cmdletbinding()]
+    param()
+    process{
+        Ensure-ClientToolsInstalled
+        Ensure-DnvmInstalled
         Ensure-AzurePowerShellImported
         Ensure-AzureUserSignedIn
         Ensure-NuGetPowerShellIsLoaded
@@ -241,7 +415,7 @@ function Initialize{
 [System.IO.FileInfo]$samplednxproj = (Join-Path $scriptDir 'samples\src\DnxWebApp\DnxWebApp.xproj')
 
 $sites = @(
-    New-SiteObject -name publishtestwap -projectpath $samplewapproj -projectType WAP
+    # New-SiteObject -name publishtestwap -projectpath $samplewapproj -projectType WAP
     New-SiteObject -name publishtestdnx-clr-withsource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $true
     New-SiteObject -name publishtestdnx-coreclr-withsource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $true
     New-SiteObject -name publishtestdnx-clr-nosource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false
@@ -250,10 +424,37 @@ $sites = @(
 
 
 try{
-    Initialize
+    # Initalize
+    $testsite = New-SiteObject -name publishtestdnx-clr-withsource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $true
+    $testsite | Populate-AzureWebSiteObjects
+    $testsite | Publish-Site
+
+    Push-Location
+    try{
+        Set-Location C:\Data\mycode\publishtests\Samples\src\DnxWebApp 
+        & dnu publish -o C:\temp\publish\01\
+    }
+    finally{
+        Pop-Location
+    }
+
 }
 catch{
     $msg = $_.Exception.ToString()
     $msg | Write-Error
 }
 
+<#
+
+Push-Location
+try{
+    
+    Set-Location C:\Data\mycode\publishtests\Samples\src\DnxWebApp 
+    & dnu publish -o C:\temp\publish\01\
+}
+finally{
+    Pop-Location
+}
+
+
+#>
