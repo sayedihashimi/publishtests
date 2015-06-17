@@ -125,6 +125,7 @@ function Populate-AzureWebSiteObjects{
     )
     process{
         foreach($siteobj in $site){
+            'Getting azure website info for [{0}]' -f $siteobj.Name | Write-Verbose
             $siteobj.AzureSiteObj = (Get-AzureWebsite -Name $siteobj.Name)
         }
     }
@@ -139,6 +140,7 @@ function Ensure-SiteExists{
     )
     process{
         foreach($siteobj in $site){
+            'Ensure-SiteExists [{0}]' -f $siteobj.Name | Write-Verbose
             # try and get the website if it doesn't return a value then create it
             if((Get-AzureWebsite -Name $siteobj.Name) -eq $null){
                 'Creating site [{0}]' -f $siteobj.Name | Write-Verbose
@@ -157,6 +159,7 @@ function Publish-Site{
     process{
         # figure out if its dnx or a standard wap
         foreach($siteobj in $site){
+            'Preparing to publish [{0}]' -f $siteobj.Name | Write-Verbose
             if($siteobj.ProjectType -eq 'DNX'){
                 Publish-DnxSite -site $siteobj
             }
@@ -238,6 +241,19 @@ function Publish-DnxSite{
     }
 }
 
+$pubxmltemplate = @'
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <MSDeployServiceURL>{0}</MSDeployServiceURL>
+    <DeployIisAppPath>{1}</DeployIisAppPath>
+    <UserName>{2}</UserName>
+	<WebPublishMethod>MSDeploy</WebPublishMethod>
+	<SkipExtraFilesOnServer>True</SkipExtraFilesOnServer>
+    <MSDeployPublishMethod>WMSVC</MSDeployPublishMethod>
+  </PropertyGroup>
+</Project>
+'@
 function Publish-WapSite{
     [cmdletbinding()]
     param(
@@ -245,6 +261,15 @@ function Publish-WapSite{
     )
     process{
         foreach($siteobj in $site){
+            'Publishing WAP project at [{0}] to [{1}]' -f $siteobj.projectpath,$siteobj.Name | Write-Verbose
+            # create a .pubxml file for the site and then call msbuild.exe to build & publish
+            [string]$username = ($siteobj.AzureSiteObj.SiteProperties.Properties|%{ if($_.Name -eq 'PublishingUsername'){$_.Value} })
+            [string]$pubpwd = ($siteobj.AzureSiteObj.SiteProperties.Properties|%{ if($_.Name -eq 'PublishingPassword'){$_.Value} })
+            [string]$msdeployurl = ('{0}:443' -f ($siteobj.AzureSiteObj.SiteProperties.Properties|%{ if($_.Name -eq 'RepositoryUri'){$_.Value} }) )
+            [System.IO.FileInfo]$temppubxmlpath = [System.IO.Path]::GetTempFileName()
+            $pubxmltemplate -f $msdeployurl,$siteobj.Name,$username | Out-File -FilePath ($temppubxmlpath.FullName) -Encoding ascii
+
+            Invoke-MSBuild -projectsToBuild $siteobj.ProjectPath -visualStudioVersion 14.0 -deployOnBuild $true -publishProfile ($temppubxmlpath.FullName) -password $pubpwd
         }
     }
 }
@@ -265,13 +290,12 @@ function Delete-RemoteSiteContent{
             # delete the files in the remote
 
             # msdeploy.exe -verb:delete -dest:contentPath=sayed03/,ComputerName='https://sayed03.scm.azurewebsites.net/msdeploy.axd',UserName='$sayed03',Password='%pubpwd%',IncludeAcls='False',AuthType='Basic' -whatif
-            # todo: finish here
 
             $username = ($azuresite.SiteProperties.Properties|%{ if($_.Name -eq 'PublishingUsername'){$_.Value} })
             $pubpwd = ($azuresite.SiteProperties.Properties|%{ if($_.Name -eq 'PublishingPassword'){$_.Value} })
             $msdeployurl = ('{0}/msdeploy.axd' -f ($azuresite.SiteProperties.Properties|%{ if($_.Name -eq 'RepositoryUri'){$_.Value} }) )
-            $destarg = ('contentPath={0}/,ComputerName=''{1}'',UserName=''{2}'',Password=''{3}'',IncludeAcls=''False'',AuthType=''Basic'' -whatif' -f $azuresite.Name, $msdeployurl, $username,$pubpwd )
-            $msdeployargs = @('-verb:delete',('-dest:{0}' -f $destarg),'-whatif')
+            $destarg = ('contentPath={0}/,ComputerName=''{1}'',UserName=''{2}'',Password=''{3}'',IncludeAcls=''False'',AuthType=''Basic''' -f $azuresite.Name, $msdeployurl, $username,$pubpwd )
+            $msdeployargs = @('-verb:delete',('-dest:{0}' -f $destarg))
             Invoke-CommandString -command (Get-MSDeploy) -commandArgs $msdeployargs
         }
     }
@@ -434,6 +458,7 @@ function Initalize{
         $sites | Populate-AzureWebSiteObjects
 
         $sites | Delete-RemoteSiteContent
+        $sites | Publish-Site
     }
 }
 
@@ -443,7 +468,7 @@ function Initalize{
 [System.IO.FileInfo]$samplednxproj = (Join-Path $scriptDir 'samples\src\DnxWebApp\DnxWebApp.xproj')
 
 $sites = @(
-    # New-SiteObject -name publishtestwap -projectpath $samplewapproj -projectType WAP
+    New-SiteObject -name publishtestwap -projectpath $samplewapproj -projectType WAP
     New-SiteObject -name publishtestdnx-clr-withsource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $true
     New-SiteObject -name publishtestdnx-coreclr-withsource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $true
     New-SiteObject -name publishtestdnx-clr-nosource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false
@@ -452,41 +477,9 @@ $sites = @(
 
 
 try{
-    # Initalize
-
-    # $sites | Populate-AzureWebSiteObjects
-    # $sites | Publish-Site
-
-    #$testsite = New-SiteObject -name publishtestdnx-clr-withsource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $true
-    #$testsite | Populate-AzureWebSiteObjects
-    #$testsite | Publish-Site
-
-    #Push-Location
-    #try{
-    #    Set-Location (join-path $scriptDir Samples\src\DnxWebApp )
-    #    & dnu publish -o C:\temp\publish\01\
-    #}
-    #finally{
-    #    Pop-Location
-    #}
-
+    Initalize
 }
 catch{
     $msg = $_.Exception.ToString()
     $msg | Write-Error
 }
-
-<#
-
-Push-Location
-try{
-    
-    Set-Location C:\Data\mycode\publishtests\Samples\src\DnxWebApp 
-    & dnu publish -o C:\temp\publish\01\
-}
-finally{
-    Pop-Location
-}
-
-
-#>
