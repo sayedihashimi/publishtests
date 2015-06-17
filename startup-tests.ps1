@@ -206,7 +206,7 @@ function Publish-DnxSite{
                 Add-Path $dnxbin
 
                 # call publish to a temp folder
-                $tempfolder = (Join-Path ([System.IO.Path]::GetTempPath()) ('{0}-{1}' -f $siteobj.Name,[Guid]::NewGuid()) )
+                [System.IO.FileInfo]$tempfolder = (Join-Path ([System.IO.Path]::GetTempPath()) ('{0}' -f $siteobj.Name) )
                 if(Test-Path $tempfolder){
                     Remove-Item $tempfolder -Recurse
                 }
@@ -218,6 +218,13 @@ function Publish-DnxSite{
                     Set-Location $projpath.Directory.FullName
                     & dnu restore
                     & dnu.cmd publish -o $tempfolder
+                    # now publish from that folder to the remote azure site
+                    [string]$username = ($siteobj.AzureSiteObj.SiteProperties.Properties|%{ if($_.Name -eq 'PublishingUsername'){$_.Value} })
+                    [string]$pubpwd = ($siteobj.AzureSiteObj.SiteProperties.Properties|%{ if($_.Name -eq 'PublishingPassword'){$_.Value} })
+                    [string]$msdeployurl = ('{0}:443' -f ($siteobj.AzureSiteObj.SiteProperties.Properties|%{ if($_.Name -eq 'RepositoryUri'){$_.Value} }) )
+                    $pubproperties = @{'WebPublishMethod'='MSDeploy';'MSDeployServiceUrl'=$msdeployurl;'DeployIisAppPath'=$siteobj.Name;'Username'=$username;'Password'=$pubpwd}
+
+                    Publish-AspNet -packOutput ($tempfolder.FullName) -publishProperties $pubproperties
                 }
                 finally{
                     Pop-Location
@@ -445,7 +452,11 @@ $sites = @(
 
 
 try{
-    #Initalize
+    # Initalize
+
+    # $sites | Populate-AzureWebSiteObjects
+    # $sites | Publish-Site
+
     #$testsite = New-SiteObject -name publishtestdnx-clr-withsource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $true
     #$testsite | Populate-AzureWebSiteObjects
     #$testsite | Publish-Site
