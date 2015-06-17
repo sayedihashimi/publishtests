@@ -26,28 +26,21 @@ function Add-Path{
     # Get the current search path from the environment keys in the registry.
 
     $OldPath=$ENV:PATH
-
-    # See if a new folder has been supplied.
-
     if (!$AddedFolder){ Return ‘No Folder Supplied. $ENV:PATH Unchanged’}
-
-    # See if the new folder exists on the file system.
-
     if (!(TEST-PATH $AddedFolder)){ Return ‘Folder Does not Exist, Cannot be added to $ENV:PATH’ }
-
-    # See if the new Folder is already in the path.
-
     if ($ENV:PATH | Select-String -SimpleMatch $AddedFolder){ Return ‘Folder already within $ENV:PATH' }
 
+    $newpath = $OldPath
     # Set the New Path
-    $NewPath=$OldPath+’;’+$AddedFolder
+    foreach($path in $AddedFolder){
+        $NewPath=$NewPath+’;’+$path
+    }
 
     $ENV:PATH = $NewPath
-
     [Environment]::SetEnvironmentVariable('path',$NewPath,[EnvironmentVariableTarget]::Process)
-
     return $NewPath
 }
+
 
 function Ensure-AzurePowerShellImported{
     [cmdletbinding()]
@@ -189,6 +182,7 @@ function Publish-DnxSite{
                 continue
             }
 
+            [System.IO.FileInfo]$projpath = $siteobj.ProjectPath
             if($siteobj.ProjectType -eq 'DNX'){
                 'Publishing DNX project at [{0}] to [{1}]' -f $siteobj.projectpath,$siteobj.Name | Write-Verbose
                 # need to set dnx for the project
@@ -218,6 +212,16 @@ function Publish-DnxSite{
                 }
 
                 New-Item -ItemType Directory -Path $tempfolder
+
+                Push-Location
+                try{
+                    Set-Location $projpath.Directory.FullName
+                    & dnu restore
+                    & dnu.cmd publish -o $tempfolder
+                }
+                finally{
+                    Pop-Location
+                }
 
             }
             else{
@@ -361,16 +365,33 @@ function Ensure-ClientToolsInstalled{
     [cmdletbinding()]
     param()
     process{
-        $nodeexe = "$env:ProgramFiles\nodejs\node.exe"
+        [System.IO.FileInfo]$nodeexe = "${env:ProgramFiles(x86)}\Microsoft Visual Studio 14.0\Common7\IDE\Extensions\Microsoft\Web Tools\External\node\node.exe"
         if(Test-Path $nodeexe){
-            Set-Alias node $nodeexe
+            # Set-Alias node $nodeexe
 
-            Add-Path "$env:ProgramFiles\nodejs\"
+            Add-Path -AddedFolder ($nodeexe.Directory.FullName)
         }
         else{
             throw ('Unable to find node.exe at [{0}]' -f $nodeexe)
         }
 
+        $externalfolder = "${env:ProgramFiles(x86)}\Microsoft Visual Studio 14.0\Common7\IDE\Extensions\Microsoft\Web Tools\External"
+        if(Test-Path $externalfolder){
+            Add-Path -AddedFolder $externalfolder
+        }
+        else{
+            'Unable to find external folder at expected location [{0}]' -f $externalfolder | Write-Warning
+        }
+
+        $npmpath = "$env:AppDatad\npm;"
+        if(Test-Path $externalfolder){
+            Add-Path -AddedFolder $npmpath
+        }
+        else{
+            'Unable to find npm at expected location [{0}]' -f $npmpath | Write-Warning
+        }
+
+        <#
         $npmexe = "$env:ProgramFiles\nodejs\npm.cmd"
         if(Test-Path $npmexe){
             Set-Alias node $npmexe
@@ -378,7 +399,7 @@ function Ensure-ClientToolsInstalled{
         else{
             throw ('Unable to find npm.exe at [{0}]' -f $npmexe)
         }
-
+        #>
         if(-not (Test-Path env:NODE_PATH)){
             $nodepath = "$env:APPDATA\npm\node_modules\"
             if(Test-Path $nodepath){
@@ -424,19 +445,19 @@ $sites = @(
 
 
 try{
-    # Initalize
-    $testsite = New-SiteObject -name publishtestdnx-clr-withsource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $true
-    $testsite | Populate-AzureWebSiteObjects
-    $testsite | Publish-Site
+    #Initalize
+    #$testsite = New-SiteObject -name publishtestdnx-clr-withsource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $true
+    #$testsite | Populate-AzureWebSiteObjects
+    #$testsite | Publish-Site
 
-    Push-Location
-    try{
-        Set-Location C:\Data\mycode\publishtests\Samples\src\DnxWebApp 
-        & dnu publish -o C:\temp\publish\01\
-    }
-    finally{
-        Pop-Location
-    }
+    #Push-Location
+    #try{
+    #    Set-Location (join-path $scriptDir Samples\src\DnxWebApp )
+    #    & dnu publish -o C:\temp\publish\01\
+    #}
+    #finally{
+    #    Pop-Location
+    #}
 
 }
 catch{
