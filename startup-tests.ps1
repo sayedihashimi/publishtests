@@ -474,12 +474,111 @@ function Initalize{
         Ensure-AzureUserSignedIn
         Ensure-NuGetPowerShellIsLoaded
         Load-PublishModule
+    }
+}
 
-        $sites | Ensure-SiteExists
-        $sites | Populate-AzureWebSiteObjects
+function Measure-Request{
+    [cmdletbinding()]
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$url,
 
-        $sites | Delete-RemoteSiteContent
-        $sites | Publish-Site
+        [Parameter(Mandatory=$true)]
+        [string]$name,
+
+        [int]$numRetries = 10
+    )
+    process{
+        $count = 0
+        $measure = $null
+        $script:response = $null
+
+        do{
+            try{
+                $measure = Measure-Command { $script:response = Invoke-WebRequest $url }
+            }
+            catch{
+                # ignore and try again
+            }
+            if(-not $? -or ($script:response -eq $null) -or ($script:response.StatusCode -ne 200)){
+                'Unable to complete web request, status code: [{0}]' -f $script:response.StatusCode | Write-Verbose
+                Start-AzureWebsite -Name $name
+                Start-Sleep 2
+            }
+        }while(
+                ( ($script:response -eq $null) -or ($script:response.StatusCode -ne 200)) -and
+                ($count++ -le $numRetries))
+
+        if( ($script:response -eq $null) -or ($script:response.StatusCode -ne 200)){
+            $statusCodeStr = "(null)"
+            if($script:response -ne $null){
+                $statusCodeStr = $script:response.StatusCode
+            }
+            throw ("`r`nReceived an unexpected http status code [{0}] for url [{1}]`r`nIterations:{2}`r`nTotals:{3}`r`nSecond Request:{4}" -f $statusCodeStr,$url,$currentIteration,($totalMilli|Out-String),($totalMilliSecondReq|Out-String))
+        }
+
+        $measure
+    }
+}
+
+# TODO: Needs cleanup
+function Measure-SiteResponseTimesForAll{
+    [cmdletbinding()]
+    param(
+        [Parameter(Mandatory=$true,Position=0)]
+        [object[]]$sites
+    )
+    process{
+        $totalMilliTimeWap = 0
+        $totalMilliTimeV5 = 0
+        $numIterations = 25
+        [hashtable]$totalMilli = @{}
+        [hashtable]$totalMilliSecondReq = @{}
+        [hashtable]$azWebsites = @{}
+
+        $sites | % {
+            $totalMilli[$_] = 0
+            $totalMilliSecondReq[$_]=0
+            $azWebsites[$_] = $_.AzureSiteObj
+        }
+
+        $maxnumretries = 10
+        $currentIteration = 0
+        try{
+            1..$numIterations | % {
+                $currentIteration++
+                foreach($site in $sites){
+                    # stop the site
+                    $siteobj = $site.AzureSiteObj
+                    $siteobj | Stop-AzureWebsite
+                    # start the site
+                    $siteobj | Start-AzureWebsite
+                    # give it a second to settle before making a request to avoid 502 errors
+                    Start-Sleep -Seconds 2
+                    # make a webrequest and time it
+                    $url = ('http://{0}' -f $siteobj.EnabledHostNames[0])
+                    $url | Write-Host -NoNewline
+
+                    $measure = Measure-Request -url $url -numRetries $maxnumretries -name $siteobj.Name
+                    $totalMilli[$site]+= $measure.TotalMilliseconds
+
+                    $measureSecondReq = Measure-Request -url $url -numRetries $maxnumretries -name $siteobj.Name
+                    $totalMilliSecondReq[$site]+= $measureSecondReq.TotalMilliseconds
+
+                    "`t{0} milliseconds, second request {1}" -f $measure.TotalMilliseconds,$measureSecondReq.TotalMilliseconds | Write-Host
+                }
+            }
+
+            'Average response time for [{0}] with [{1}] iterations' -f $site.Name, $numIterations | Write-Host
+            $sitestotest | %{
+                $avgmilli = $totalMilli[$_]/$numIterations
+                $avgMilliSecondReq = $totalMilliSecondReq[$_]/$numIterations
+                '{0}: {1} milliseconds, second request {2} milliseconds' -f $_,$avgmilli,$avgMilliSecondReq | Write-Host
+            }
+        }
+        catch{
+            'An unepected error occurred while processing [{0}] Error:{1}' -f $site.Name, $_.Exception
+        }
     }
 }
 
@@ -499,6 +598,14 @@ $sites = @(
 
 try{
     Initalize
+
+    $sites | Ensure-SiteExists
+    $sites | Populate-AzureWebSiteObjects
+
+    $sites | Delete-RemoteSiteContent
+    $sites | Publish-Site
+
+    $sites | Measure-SiteResponseTimesForAll
 }
 catch{
     $msg = $_.Exception.ToString()
