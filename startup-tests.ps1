@@ -59,6 +59,7 @@ function Ensure-AzurePowerShellImported{
     }
 }
 
+# TODO: This doesn't work, it needs to be updated
 function Ensure-AzureUserSignedIn{
     [cmdletbinding()]
     param()
@@ -315,7 +316,7 @@ function Delete-RemoteSiteContent{
             'Deleting files for site [{0}]' -f $azuresite.Name | Write-Verbose
             # first stop the site
             Stop-AzureWebsite ($azuresite.Name)
-
+            Start-Sleep -Seconds 4
             # delete the files in the remote
 
             # msdeploy.exe -verb:delete -dest:contentPath=sayed03/,ComputerName='https://sayed03.scm.azurewebsites.net/msdeploy.axd',UserName='$sayed03',Password='%pubpwd%',IncludeAcls='False',AuthType='Basic' -whatif
@@ -324,7 +325,7 @@ function Delete-RemoteSiteContent{
             $pubpwd = ($azuresite.SiteProperties.Properties|%{ if($_.Name -eq 'PublishingPassword'){$_.Value} })
             $msdeployurl = ('{0}/msdeploy.axd' -f ($azuresite.SiteProperties.Properties|%{ if($_.Name -eq 'RepositoryUri'){$_.Value} }) )
             $destarg = ('contentPath={0}/,ComputerName=''{1}'',UserName=''{2}'',Password=''{3}'',IncludeAcls=''False'',AuthType=''Basic''' -f $azuresite.Name, $msdeployurl, $username,$pubpwd )
-            $msdeployargs = @('-verb:delete',('-dest:{0}' -f $destarg))
+            $msdeployargs = @('-verb:delete',('-dest:{0}' -f $destarg),'-retryAttempts:3')
             Invoke-CommandString -command (Get-MSDeploy) -commandArgs $msdeployargs
         }
     }
@@ -425,26 +426,16 @@ function Ensure-ClientToolsInstalled{
     [cmdletbinding()]
     param()
     process{
-        [System.IO.FileInfo]$nodeexe = "${env:ProgramFiles(x86)}\Microsoft Visual Studio 14.0\Common7\IDE\Extensions\Microsoft\Web Tools\External\node\node.exe"
-        if(Test-Path $nodeexe){
-            # Set-Alias node $nodeexe
-
-            Add-Path -pathToAdd ($nodeexe.Directory.FullName) | Out-Null
+        [System.IO.DirectoryInfo]$externaltools = "${env:ProgramFiles(x86)}\Microsoft Visual Studio 14.0\Common7\IDE\Extensions\Microsoft\Web Tools\External\"
+        if(Test-Path $externaltools){
+            Add-Path ($externaltools.FullName)
         }
         else{
-            throw ('Unable to find node.exe at [{0}]' -f $nodeexe)
+            throw ('Unable to find external tools folder at [{0}]' -f $externaltools)
         }
 
-        $externalfolder = "${env:ProgramFiles(x86)}\Microsoft Visual Studio 14.0\Common7\IDE\Extensions\Microsoft\Web Tools\External"
-        if(Test-Path $externalfolder){
-            Add-Path -pathToAdd $externalfolder | Out-Null
-        }
-        else{
-            'Unable to find external folder at expected location [{0}]' -f $externalfolder | Write-Warning
-        }
-
-        $npmpath = "$env:AppDatad\npm;"
-        if(Test-Path $externalfolder){
+        $npmpath = "$env:AppData\npm"
+        if(Test-Path $npmpath){
             Add-Path -pathToAdd $npmpath | Out-Null
         }
         else{
@@ -501,13 +492,23 @@ function Measure-Request{
         $measure = $null
         $response = $null
 
+        # TODO: Check the num bytes received to ensure its over 1 before counting it as a valid response even if status code is OK.
+
         do{
+            if($count -gt 0){
+                # last request was an error try starting and then sleeping for a better chance on next request
+                'Ensuring the site [{0}] is started' -f $name | Write-Verbose
+                Start-AzureWebsite -Name $name
+                Start-Sleep 2
+            }
+
             try{
                 $measure = Measure-Command { $response = Invoke-WebRequest $url }
             }
             catch{
                 # ignore and try again
                 $_.Exception | Write-Warning
+                Start-Sleep 2
             }
             if(-not $? -or ($response -eq $null) -or ($response.StatusCode -ne 200)){
                 $statuscode = '(null)'
@@ -515,8 +516,7 @@ function Measure-Request{
                     $statuscode = $response.StatusCode
                 }
                 'Unable to complete web request, status code: [{0}]' -f $statuscode | Write-Verbose
-                Start-AzureWebsite -Name $name
-                Start-Sleep 2
+                
             }
         }while(
                 ( ($response -eq $null) -or ($response.StatusCode -ne 200)) -and
@@ -543,23 +543,23 @@ function Measure-SiteResponseTimesForAll{
     [cmdletbinding()]
     param(
         [Parameter(Mandatory=$true,Position=0)]
-        [object[]]$sites
+        [object[]]$sites,
+
+        [Parameter(Position=2)]
+        [int]$numIterations = 5,
+
+        [Parameter(Position=3)]
+        [int]$maxnumretries = 10
     )
     process{
-        $totalMilliTimeWap = 0
-        $totalMilliTimeV5 = 0
-        $numIterations = 25
         [hashtable]$totalMilli = @{}
         [hashtable]$totalMilliSecondReq = @{}
-        [hashtable]$azWebsites = @{}
 
         $sites | % {
             $totalMilli[$_] = 0
             $totalMilliSecondReq[$_]=0
-            $azWebsites[$_] = $_.AzureSiteObj
         }
 
-        $maxnumretries = 10
         $currentIteration = 0
         try{
             1..$numIterations | % {
@@ -574,7 +574,6 @@ function Measure-SiteResponseTimesForAll{
                     Start-Sleep -Seconds 2
                     # make a webrequest and time it
                     $url = ('http://{0}' -f $siteobj.EnabledHostNames[0])
-                    $url | Write-Host -NoNewline
 
                     $measure = Measure-Request -url $url -numRetries $maxnumretries -name $siteobj.Name
                     $totalMilli[$site]+= $measure.TotalMilliseconds
@@ -582,15 +581,27 @@ function Measure-SiteResponseTimesForAll{
                     $measureSecondReq = Measure-Request -url $url -numRetries $maxnumretries -name $siteobj.Name
                     $totalMilliSecondReq[$site]+= $measureSecondReq.TotalMilliseconds
 
-                    "`t{0} milliseconds, second request {1}" -f $measure.TotalMilliseconds,$measureSecondReq.TotalMilliseconds | Write-Host
+                    "{0}`t{1} milliseconds, second request {2}" -f $url, $measure.TotalMilliseconds,$measureSecondReq.TotalMilliseconds | Write-Verbose
                 }
             }
 
-            'Average response time for [{0}] with [{1}] iterations' -f $site.Name, $numIterations | Write-Host
+            'Average response time for [{0}] with [{1}] iterations' -f $site.Name, $numIterations | Write-Verbose
             $sitestotest | %{
                 $avgmilli = $totalMilli[$_]/$numIterations
                 $avgMilliSecondReq = $totalMilliSecondReq[$_]/$numIterations
-                '{0}: {1} milliseconds, second request {2} milliseconds' -f $_,$avgmilli,$avgMilliSecondReq | Write-Host
+                '{0}: {1} milliseconds, second request {2} milliseconds' -f $_,$avgmilli,$avgMilliSecondReq | Write-Verbose
+            }
+
+            foreach($site in $sitestotest){
+                # return the object with the data to the stream
+                New-Object -TypeName psobject -Property @{
+                    Site = $_                    
+                    NumIterations = $numIterations
+                    TotalMillisecondsFirstRequest = $totalMilli
+                    AverageMillisecondsFirstRequest = ($totalMilli[$_]/$numIterations)
+                    TotalMillisecondsSecondRequest = ($totalMilliSecondReq / $numIterations)
+                    AverageMillisecondsSecondRequest = ($totalMilliSecondReq[$_]/$numIterations)
+                }
             }
         }
         catch{
@@ -621,7 +632,12 @@ try{
     $sites | Delete-RemoteSiteContent
     $sites | Publish-Site
 
-    Measure-SiteResponseTimesForAll -sites $sites
+    $result = Measure-SiteResponseTimesForAll -sites $sites
+
+    $global:testresult = $result
+
+    # display the result at the end
+    $result
 }
 catch{
     $msg = $_.Exception.ToString()
