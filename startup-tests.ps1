@@ -91,17 +91,23 @@ function New-SiteObject{
         [string]$dnxruntime='clr',
 
         [Parameter(Position=6)]
-        [bool]$dnxpublishsource = $true
+        [bool]$dnxpublishsource = $true,
 
+        [Parameter(Position=7)]
+        [string]$SolutionRoot
     )
     process{
         $siteobj = New-Object -TypeName psobject -Property @{
             Name = $name
             ProjectPath = $projectpath
             ProjectType = $projectType
+
             DnxVersion = $dnxversion
             DnxBitness = $null
             DnxRuntime = $null
+
+            # only needed for WAP project so that nuget restore can be called
+            SolutionRoot = $SolutionRoot
 
             # will be populated when the script is started
             AzureSiteObj = $null
@@ -206,7 +212,7 @@ function Publish-DnxSite{
                     throw ('dnx bin not found at [{0}]' -f $dnxbin)
                 }
 
-                Add-Path $dnxbin
+                Add-Path $dnxbin | Out-Null
 
                 # call publish to a temp folder
                 [System.IO.FileInfo]$tempfolder = (Join-Path ([System.IO.Path]::GetTempPath()) ('{0}' -f $siteobj.Name) )
@@ -262,6 +268,21 @@ function Publish-WapSite{
     process{
         foreach($siteobj in $site){
             'Publishing WAP project at [{0}] to [{1}]' -f $siteobj.projectpath,$siteobj.Name | Write-Verbose
+            'Restoring nuget packages' | Write-Verbose
+
+            if(-not [string]::IsNullOrEmpty($siteobj.SolutionRoot)){
+                try{
+                    Push-Location
+                    Set-Location (join-path $siteobj.projectpath.Directory.Fullname $siteobj.SolutionRoot)
+                    Invoke-CommandString -command (Get-Nuget) -commandArgs @('restore')
+                }
+                finally{
+                    Pop-Location
+                }
+            }
+            else{
+                'Skipping nuget restore because SolutionRoot was not defined on [{0}]' -f $siteobj.Name | Write-Verbose
+            }
             # create a .pubxml file for the site and then call msbuild.exe to build & publish
             [string]$username = ($siteobj.AzureSiteObj.SiteProperties.Properties|%{ if($_.Name -eq 'PublishingUsername'){$_.Value} })
             [string]$pubpwd = ($siteobj.AzureSiteObj.SiteProperties.Properties|%{ if($_.Name -eq 'PublishingPassword'){$_.Value} })
@@ -400,7 +421,7 @@ function Ensure-ClientToolsInstalled{
         if(Test-Path $nodeexe){
             # Set-Alias node $nodeexe
 
-            Add-Path -AddedFolder ($nodeexe.Directory.FullName)
+            Add-Path -AddedFolder ($nodeexe.Directory.FullName) | Out-Null
         }
         else{
             throw ('Unable to find node.exe at [{0}]' -f $nodeexe)
@@ -408,7 +429,7 @@ function Ensure-ClientToolsInstalled{
 
         $externalfolder = "${env:ProgramFiles(x86)}\Microsoft Visual Studio 14.0\Common7\IDE\Extensions\Microsoft\Web Tools\External"
         if(Test-Path $externalfolder){
-            Add-Path -AddedFolder $externalfolder
+            Add-Path -AddedFolder $externalfolder | Out-Null
         }
         else{
             'Unable to find external folder at expected location [{0}]' -f $externalfolder | Write-Warning
@@ -416,7 +437,7 @@ function Ensure-ClientToolsInstalled{
 
         $npmpath = "$env:AppDatad\npm;"
         if(Test-Path $externalfolder){
-            Add-Path -AddedFolder $npmpath
+            Add-Path -AddedFolder $npmpath | Out-Null
         }
         else{
             'Unable to find npm at expected location [{0}]' -f $npmpath | Write-Warning
