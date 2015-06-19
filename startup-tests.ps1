@@ -14,33 +14,37 @@ $originalpath = $env:Path
 
 # http://blogs.technet.com/b/heyscriptingguy/archive/2011/07/23/use-powershell-to-modify-your-environmental-path.aspx
 function Add-Path{
-    [Cmdletbinding()]
-    param
-    (
-        [parameter(Mandatory=$True,
-        ValueFromPipeline=$True,
-        Position=0)]
-        [String[]]$AddedFolder
+    [cmdletbinding()]
+    param(
+        [Parameter(Mandatory=$True,ValueFromPipeline=$True,Position=0)]
+        [string[]]$pathToAdd
     )
 
     # Get the current search path from the environment keys in the registry.
 
-    $OldPath=$ENV:PATH
-    if (!$AddedFolder){ Return ‘No Folder Supplied. $ENV:PATH Unchanged’}
-    if (!(TEST-PATH $AddedFolder)){ Return ‘Folder Does not Exist, Cannot be added to $ENV:PATH’ }
-    if ($ENV:PATH | Select-String -SimpleMatch $AddedFolder){ Return ‘Folder already within $ENV:PATH' }
-
-    $newpath = $OldPath
-    # Set the New Path
-    foreach($path in $AddedFolder){
-        $NewPath=$NewPath+’;’+$path
+    $oldpath=$env:path
+    if (!$pathToAdd){
+        ‘No Folder Supplied. $env:path Unchanged’ | Write-Verbose
+        return
     }
+    elseif (!(test-path $pathToAdd)){
+        ‘Folder Does not Exist, Cannot be added to $env:path’ | Write-Verbose
+    }
+    elseif ($env:path | Select-String -SimpleMatch $pathToAdd){
+        Return ‘Folder already within $env:path'
+    }
+    else{
+        'Adding [{0}] to the path' -f $pathToAdd | Write-Verbose
+        $newpath = $oldpath
+        # set the new path
+        foreach($path in $pathToAdd){
+            $newPath=$newPath+’;’+$path
+        }
 
-    $ENV:PATH = $NewPath
-    [Environment]::SetEnvironmentVariable('path',$NewPath,[EnvironmentVariableTarget]::Process)
-    return $NewPath
+        $env:path = $newPath
+        [Environment]::SetEnvironmentVariable('path',$newPath,[EnvironmentVariableTarget]::Process)
+    }
 }
-
 
 function Ensure-AzurePowerShellImported{
     [cmdletbinding()]
@@ -195,7 +199,7 @@ function Publish-DnxSite{
             if($siteobj.ProjectType -eq 'DNX'){
                 'Publishing DNX project at [{0}] to [{1}]' -f $siteobj.projectpath,$siteobj.Name | Write-Verbose
                 # need to set dnx for the project
-                $dnxstring = ('{0}' -f $dnxversion)
+
 
                 # command: dnvm install 1.0.0-beta4 -arch x86 -runtime clr
                 $cmdargs = @('install',$siteobj.DnxVersion,'-arch',$siteobj.DnxBitness,'-runtime',$siteobj.DnxRuntime)
@@ -207,7 +211,7 @@ function Publish-DnxSite{
                 Invoke-CommandString -command ($dnvmpath.FullName) -commandArgs $cmdargs
 
                 # add dnx bin to the path C:\Users\sayedha\.dnx\runtimes\dnx-clr-win-x64.1.0.0-beta4\bin
-                $dnxbin = (Join-Path $env:USERPROFILE ('.dnx\runtimes\dnx-{0}-win-{1}.{2}\bin' -f $siteobj.DnxRuntime,$siteobj.DnxBitness,$dnxstring))
+                $dnxbin = (Join-Path $env:USERPROFILE ('.dnx\runtimes\dnx-{0}-win-{1}.{2}\bin' -f $siteobj.DnxRuntime,$siteobj.DnxBitness,$dnxversion))
                 if(-not (Test-Path $dnxbin)){
                     throw ('dnx bin not found at [{0}]' -f $dnxbin)
                 }
@@ -226,12 +230,16 @@ function Publish-DnxSite{
                 try{
                     Set-Location $projpath.Directory.FullName
                     & dnu restore
-                    & dnu.cmd publish -o $tempfolder
+                    # call dnu.cmd to publish the site to a folder
+                    $dnxstring = ('dnx-{0}-win-{1}.{2}' -f $siteobj.DnxRuntime,$siteobj.DnxBitness,$dnxversion)
+                    $pubargs = ('publish','-o',$tempfolder.FullName,'--configuration','Release','--wwwroot-out','wwwroot','--runtime',$dnxstring)
+                    Invoke-CommandString -command (Join-Path $dnxbin 'dnu.cmd') -commandArgs $pubargs
                     # now publish from that folder to the remote azure site
+
                     [string]$username = ($siteobj.AzureSiteObj.SiteProperties.Properties|%{ if($_.Name -eq 'PublishingUsername'){$_.Value} })
                     [string]$pubpwd = ($siteobj.AzureSiteObj.SiteProperties.Properties|%{ if($_.Name -eq 'PublishingPassword'){$_.Value} })
                     [string]$msdeployurl = ('{0}:443' -f ($siteobj.AzureSiteObj.SiteProperties.Properties|%{ if($_.Name -eq 'RepositoryUri'){$_.Value} }) )
-                    $pubproperties = @{'WebPublishMethod'='MSDeploy';'MSDeployServiceUrl'=$msdeployurl;'DeployIisAppPath'=$siteobj.Name;'Username'=$username;'Password'=$pubpwd}
+                    $pubproperties = @{'WebPublishMethod'='MSDeploy';'MSDeployServiceUrl'=$msdeployurl;'DeployIisAppPath'=$siteobj.Name;'Username'=$username;'Password'=$pubpwd;'WebRoot'='wwwroot'}
 
                     Publish-AspNet -packOutput ($tempfolder.FullName) -publishProperties $pubproperties
                 }
@@ -421,7 +429,7 @@ function Ensure-ClientToolsInstalled{
         if(Test-Path $nodeexe){
             # Set-Alias node $nodeexe
 
-            Add-Path -AddedFolder ($nodeexe.Directory.FullName) | Out-Null
+            Add-Path -pathToAdd ($nodeexe.Directory.FullName) | Out-Null
         }
         else{
             throw ('Unable to find node.exe at [{0}]' -f $nodeexe)
@@ -429,7 +437,7 @@ function Ensure-ClientToolsInstalled{
 
         $externalfolder = "${env:ProgramFiles(x86)}\Microsoft Visual Studio 14.0\Common7\IDE\Extensions\Microsoft\Web Tools\External"
         if(Test-Path $externalfolder){
-            Add-Path -AddedFolder $externalfolder | Out-Null
+            Add-Path -pathToAdd $externalfolder | Out-Null
         }
         else{
             'Unable to find external folder at expected location [{0}]' -f $externalfolder | Write-Warning
@@ -437,7 +445,7 @@ function Ensure-ClientToolsInstalled{
 
         $npmpath = "$env:AppDatad\npm;"
         if(Test-Path $externalfolder){
-            Add-Path -AddedFolder $npmpath | Out-Null
+            Add-Path -pathToAdd $npmpath | Out-Null
         }
         else{
             'Unable to find npm at expected location [{0}]' -f $npmpath | Write-Warning
@@ -491,37 +499,46 @@ function Measure-Request{
     process{
         $count = 0
         $measure = $null
-        $script:response = $null
+        $response = $null
 
         do{
             try{
-                $measure = Measure-Command { $script:response = Invoke-WebRequest $url }
+                $measure = Measure-Command { $response = Invoke-WebRequest $url }
             }
             catch{
                 # ignore and try again
+                $_.Exception | Write-Warning
             }
-            if(-not $? -or ($script:response -eq $null) -or ($script:response.StatusCode -ne 200)){
-                'Unable to complete web request, status code: [{0}]' -f $script:response.StatusCode | Write-Verbose
+            if(-not $? -or ($response -eq $null) -or ($response.StatusCode -ne 200)){
+                $statuscode = '(null)'
+                if($response -ne $null -and ($response.StatusCode -ne $null)){
+                    $statuscode = $response.StatusCode
+                }
+                'Unable to complete web request, status code: [{0}]' -f $statuscode | Write-Verbose
                 Start-AzureWebsite -Name $name
                 Start-Sleep 2
             }
         }while(
-                ( ($script:response -eq $null) -or ($script:response.StatusCode -ne 200)) -and
+                ( ($response -eq $null) -or ($response.StatusCode -ne 200)) -and
                 ($count++ -le $numRetries))
 
-        if( ($script:response -eq $null) -or ($script:response.StatusCode -ne 200)){
-            $statusCodeStr = "(null)"
-            if($script:response -ne $null){
-                $statusCodeStr = $script:response.StatusCode
+        try{
+            if( ($response -eq $null) -or ($response.StatusCode -ne 200)){
+                $statusCodeStr = "(null)"
+                if($response -ne $null){
+                    $statusCodeStr = $response.StatusCode
+                }
+                throw ("`r`nReceived an unexpected http status code [{0}] for url [{1}]`r`nIterations:{2}`r`nTotals:{3}`r`nSecond Request:{4}" -f $statusCodeStr,$url,$currentIteration,($totalMilli|Out-String),($totalMilliSecondReq|Out-String))
             }
-            throw ("`r`nReceived an unexpected http status code [{0}] for url [{1}]`r`nIterations:{2}`r`nTotals:{3}`r`nSecond Request:{4}" -f $statusCodeStr,$url,$currentIteration,($totalMilli|Out-String),($totalMilliSecondReq|Out-String))
         }
-
+        catch{
+            $_.Exception | Write-Warning
+        }
         $measure
     }
 }
 
-# TODO: Needs cleanup
+# TODO: Needs some cleanup
 function Measure-SiteResponseTimesForAll{
     [cmdletbinding()]
     param(
@@ -595,7 +612,6 @@ $sites = @(
     New-SiteObject -name publishtestdnx-coreclr-nosource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $false
 )
 
-
 try{
     Initalize
 
@@ -605,7 +621,7 @@ try{
     $sites | Delete-RemoteSiteContent
     $sites | Publish-Site
 
-    $sites | Measure-SiteResponseTimesForAll
+    Measure-SiteResponseTimesForAll -sites $sites
 }
 catch{
     $msg = $_.Exception.ToString()
