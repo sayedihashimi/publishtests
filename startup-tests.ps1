@@ -304,6 +304,60 @@ function Publish-WapSite{
     }
 }
 
+function Ensure-AzureWebsiteStopped{
+    param(
+        [Parameter(Mandatory=$true,Position=0)]
+        [ValidateNotNullOrEmpty()]
+        [string]$name,
+
+        [int]$numretries = 3
+    )
+    process{
+        'Stopping site [{0}]' -f $name | Write-Verbose
+        $retries = 0
+        $stoppedsite = $false
+        while($retries -le $numretries){
+            if( (Stop-AzureWebsite -Name $name -PassThru) -eq $true){
+                $stoppedsite = $true
+                break;
+            }
+            Start-Sleep -Seconds 1
+            $retries++
+        }
+
+        if(-not $stoppedsite){
+            throw ('Unable to stop site [{0}] after [{1}] retries' -f $name, $numretries)
+        }
+    }
+}
+
+function Ensure-AzureWebsiteStarted{
+    param(
+        [Parameter(Mandatory=$true,Position=0)]
+        [ValidateNotNullOrEmpty()]
+        [string]$name,
+
+        [int]$numretries = 3
+    )
+    process{
+        'Starting site [{0}]' -f $name | Write-Verbose
+        $retries = 0
+        $startedsite = $false
+        while($retries -le $numretries){
+            if( (Start-AzureWebsite -Name $name -PassThru) -eq $true){
+                $startedsite = $true
+                break;   
+            }
+            Start-Sleep -Seconds 1
+            $retries++
+        }
+
+        if(-not $startedsite){
+            throw ('Unable to start site [{0}] after [{1}] retries' -f $name, $numretries)
+        }
+    }
+}
+
 function Delete-RemoteSiteContent{
     [cmdletbinding()]
     param(
@@ -315,7 +369,7 @@ function Delete-RemoteSiteContent{
             $azuresite = $siteobj.AzureSiteObj
             'Deleting files for site [{0}]' -f $azuresite.Name | Write-Verbose
             # first stop the site
-            Stop-AzureWebsite ($azuresite.Name)
+            Ensure-AzureWebsiteStopped -Name ($azuresite.Name)
             Start-Sleep -Seconds 4
             # delete the files in the remote
 
@@ -434,12 +488,17 @@ function Ensure-ClientToolsInstalled{
             throw ('Unable to find external tools folder at [{0}]' -f $externaltools)
         }
 
+        # do this so that bower.cmd can be resolved as bower when post scripts are executed
+        Get-ChildItem $externaltools *.cmd | % {
+            Set-Alias ($_.BaseName) $_.FullName
+        }
+
         $npmpath = "$env:AppData\npm"
         if(Test-Path $npmpath){
             Add-Path -pathToAdd $npmpath | Out-Null
         }
         else{
-            'Unable to find npm at expected location [{0}]' -f $npmpath | Write-Warning
+            '1: Unable to find npm at expected location [{0}]' -f $npmpath | Write-Warning
         }
 
         <#
@@ -498,8 +557,9 @@ function Measure-Request{
             if($count -gt 0){
                 # last request was an error try starting and then sleeping for a better chance on next request
                 'Ensuring the site [{0}] is started' -f $name | Write-Verbose
-                Start-AzureWebsite -Name $name
-                Start-Sleep 2
+                Ensure-AzureWebsiteStopped -Name $name -ErrorAction Ignore
+                Ensure-AzureWebsiteStarted -Name $name -ErrorAction Ignore
+                Start-Sleep 5
             }
 
             try{
@@ -507,8 +567,7 @@ function Measure-Request{
             }
             catch{
                 # ignore and try again
-                $_.Exception | Write-Warning
-                Start-Sleep 2
+                "2: $_.Exception" | Write-Warning
             }
             if(-not $? -or ($response -eq $null) -or ($response.StatusCode -ne 200)){
                 $statuscode = '(null)'
@@ -532,7 +591,7 @@ function Measure-Request{
             }
         }
         catch{
-            $_.Exception | Write-Warning
+            "3: $_.Exception" | Write-Warning
         }
         $measure
     }
@@ -546,7 +605,7 @@ function Measure-SiteResponseTimesForAll{
         [object[]]$sites,
 
         [Parameter(Position=2)]
-        [int]$numIterations = 5,
+        [int]$numIterations = 10,
 
         [Parameter(Position=3)]
         [int]$maxnumretries = 10
@@ -567,9 +626,9 @@ function Measure-SiteResponseTimesForAll{
                 foreach($site in $sites){
                     # stop the site
                     $siteobj = $site.AzureSiteObj
-                    $siteobj | Stop-AzureWebsite
+                    Ensure-AzureWebsiteStopped -Name ($siteobj.Name)
                     # start the site
-                    $siteobj | Start-AzureWebsite
+                    Ensure-AzureWebsiteStarted -Name ($siteobj.Name)
                     # give it a second to settle before making a request to avoid 502 errors
                     Start-Sleep -Seconds 2
                     # make a webrequest and time it
@@ -584,15 +643,8 @@ function Measure-SiteResponseTimesForAll{
                     "{0}`t{1} milliseconds, second request {2}" -f $url, $measure.TotalMilliseconds,$measureSecondReq.TotalMilliseconds | Write-Verbose
                 }
             }
-
-            'Average response time for [{0}] with [{1}] iterations' -f $site.Name, $numIterations | Write-Verbose
-            $sitestotest | %{
-                $avgmilli = $totalMilli[$_]/$numIterations
-                $avgMilliSecondReq = $totalMilliSecondReq[$_]/$numIterations
-                '{0}: {1} milliseconds, second request {2} milliseconds' -f $_,$avgmilli,$avgMilliSecondReq | Write-Verbose
-            }
-
-            foreach($site in $sitestotest){
+            
+            foreach($site in $sites){
                 # return the object with the data to the stream
                 New-Object -TypeName psobject -Property @{
                     Site = $_                    
@@ -629,8 +681,8 @@ try{
     $sites | Ensure-SiteExists
     $sites | Populate-AzureWebSiteObjects
 
-    $sites | Delete-RemoteSiteContent
-    $sites | Publish-Site
+    #$sites | Delete-RemoteSiteContent
+    #$sites | Publish-Site
 
     $result = Measure-SiteResponseTimesForAll -sites $sites
 
