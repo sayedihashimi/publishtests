@@ -535,76 +535,6 @@ function Initalize{
     }
 }
 
-function Measure-Request-Old{
-    [cmdletbinding()]
-    param(
-        [Parameter(Mandatory=$true)]
-        [string]$url,
-
-        [Parameter(Mandatory=$true)]
-        [string]$name,
-
-        [int]$numRetries = 10
-    )
-    process{
-        $count = 0
-        $measure = $null
-        $response = $null
-
-        # TODO: Check the num bytes received to ensure its over 1 before counting it as a valid response even if status code is OK.
-
-        do{
-            if($count -gt 0){
-                # last request was an error try starting and then sleeping for a better chance on next request
-                'Ensuring the site [{0}] is started' -f $name | Write-Verbose
-                Ensure-AzureWebsiteStopped -Name $name -ErrorAction Ignore
-                Ensure-AzureWebsiteStarted -Name $name -ErrorAction Ignore
-                Start-Sleep 5
-            }
-
-            try{
-                $measure = Measure-Command { $response = Invoke-WebRequest $url }
-            }
-            catch{
-                # ignore and try again
-                "2: $_.Exception" | Write-Warning
-            }
-            if(-not $? -or ($response -eq $null) -or ($response.StatusCode -ne 200)){
-                $statuscode = '(null)'
-                if($response -ne $null -and ($response.StatusCode -ne $null)){
-                    $statuscode = $response.StatusCode
-                }
-                'Unable to complete web request, status code: [{0}]' -f $statuscode | Write-Verbose
-                
-            }
-        }while(
-                ( ($response -eq $null) -or ($response.StatusCode -ne 200)) -and
-                ($count++ -le $numRetries))
-
-        try{
-            if( ($response -eq $null) -or ($response.StatusCode -ne 200)){
-                $statusCodeStr = "(null)"
-                if($response -ne $null){
-                    $statusCodeStr = $response.StatusCode
-                }
-                throw ("`r`nReceived an unexpected http status code [{0}] for url [{1}]`r`nIterations:{2}`r`nTotals:{3}`r`nSecond Request:{4}" -f $statusCodeStr,$url,$currentIteration,($totalMilli|Out-String),($totalMilliSecondReq|Out-String))
-            }
-        }
-        catch{
-            "3: $_.Exception" | Write-Warning
-        }
-        
-        # $measure
-
-        # create an object with all the data and return it
-        New-Object -TypeName psobject -Property @{
-            Name = $name
-            Url = $url
-            Measure = $measure
-        }
-    }
-}
-
 function Measure-Request{
     [cmdletbinding()]    
     param(
@@ -662,71 +592,6 @@ function Measure-Request{
     }
 }
 
-# TODO: Needs some cleanup
-function Measure-SiteResponseTimesForAll-Old{
-    [cmdletbinding()]
-    param(
-        [Parameter(Mandatory=$true,Position=0)]
-        [object[]]$sites,
-
-        [Parameter(Position=2)]
-        [int]$numIterations = 10,
-
-        [Parameter(Position=3)]
-        [int]$maxnumretries = 10
-    )
-    process{
-        [hashtable]$totalMilli = @{}
-        [hashtable]$totalMilliSecondReq = @{}
-
-        $sites | % {
-            $totalMilli[$_] = 0
-            $totalMilliSecondReq[$_]=0
-        }
-
-        $currentIteration = 0
-        try{
-            1..$numIterations | % {
-                $currentIteration++
-                foreach($site in $sites){
-                    # stop the site
-                    $siteobj = $site.AzureSiteObj
-                    Ensure-AzureWebsiteStopped -Name ($siteobj.Name)
-                    # start the site
-                    Ensure-AzureWebsiteStarted -Name ($siteobj.Name)
-                    # give it a second to settle before making a request to avoid 502 errors
-                    Start-Sleep -Seconds 2
-                    # make a webrequest and time it
-                    $url = ('http://{0}' -f $siteobj.EnabledHostNames[0])
-
-                    $measure = Measure-Request -url $url -numRetries $maxnumretries -name $siteobj.Name
-                    $totalMilli[$site]+= $measure.TotalMilliseconds
-
-                    $measureSecondReq = Measure-Request -url $url -numRetries $maxnumretries -name $siteobj.Name
-                    $totalMilliSecondReq[$site]+= $measureSecondReq.TotalMilliseconds
-
-                    "{0}`t{1} milliseconds, second request {2}" -f $url, $measure.TotalMilliseconds,$measureSecondReq.TotalMilliseconds | Write-Verbose
-                }
-            }
-            
-            foreach($site in $sites){
-                # return the object with the data to the stream
-                New-Object -TypeName psobject -Property @{
-                    Site = $_                    
-                    NumIterations = $numIterations
-                    TotalMillisecondsFirstRequest = $totalMilli
-                    AverageMillisecondsFirstRequest = ($totalMilli[$_]/$numIterations)
-                    TotalMillisecondsSecondRequest = ($totalMilliSecondReq / $numIterations)
-                    AverageMillisecondsSecondRequest = ($totalMilliSecondReq[$_]/$numIterations)
-                }
-            }
-        }
-        catch{
-            'An unepected error occurred while processing [{0}] Error:{1}' -f $site.Name, $_.Exception
-        }
-    }
-}
-
 function Measure-SiteResponseTimesForAll{
     [cmdletbinding()]
     param(
@@ -734,7 +599,7 @@ function Measure-SiteResponseTimesForAll{
         [object[]]$sites,
 
         [Parameter(Position=2)]
-        [int]$numIterations = 25,
+        [int]$numIterations = 1,
 
         [Parameter(Position=3)]
         [int]$maxnumretries = 5
