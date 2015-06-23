@@ -657,6 +657,7 @@ function Measure-Request{
             Name = $name
             Url = $url
             Measure = $measure
+            Response = $resp
         }
     }
 }
@@ -733,7 +734,7 @@ function Measure-SiteResponseTimesForAll{
         [object[]]$sites,
 
         [Parameter(Position=2)]
-        [int]$numIterations = 1,
+        [int]$numIterations = 25,
 
         [Parameter(Position=3)]
         [int]$maxnumretries = 5
