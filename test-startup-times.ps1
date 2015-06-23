@@ -592,7 +592,8 @@ function Measure-Request{
                 StatusCode = $resp.BaseResponse.StatusCode
                 ContentLength = $resp.BaseResponse.ContentLength
             }
-            ResponseTime = $stopwatch.Elapsed            
+            ResponseTime = $stopwatch.Elapsed
+            NumAttempts = ($count+1)
         }
     }
 }
@@ -604,7 +605,7 @@ function Measure-SiteResponseTimesForAll{
         [object[]]$sites,
 
         [Parameter(Position=2)]
-        [int]$numIterations = 1,
+        [int]$numIterations = 2,
 
         [Parameter(Position=3)]
         [int]$maxnumretries = 5
@@ -639,15 +640,14 @@ function Measure-SiteResponseTimesForAll{
                     Start-Sleep -Seconds 2
                     # make a webrequest and time it
                     $url = ('http://{0}' -f $siteobj.EnabledHostNames[0])
-                    $url | Write-Host -NoNewline
-            
+
                     $measure = Measure-Request -url $url -numRetries $maxnumretries -name $siteobj.Name
                     $totalMilli[$site]+= $measure.ResponseTime.TotalMilliseconds
 
                     $measureSecondReq = Measure-Request -url $url -numRetries $maxnumretries -name $siteobj.Name
                     $totalMilliSecondReq[$site]+= $measureSecondReq.ResponseTime.TotalMilliseconds
 
-                    "`t{0} milliseconds, second request {1}" -f $measure.ResponseTime.TotalMilliseconds,$measureSecondReq.ResponseTime.TotalMilliseconds | Write-Host
+                    "{0}: {1} milliseconds, second request {2}" -f $url,$measure.ResponseTime.TotalMilliseconds,$measureSecondReq.ResponseTime.TotalMilliseconds | Write-Verbose
 
                     # return an object with the result
                     $result = New-Object -TypeName psobject -Property @{
