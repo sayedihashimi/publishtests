@@ -535,7 +535,7 @@ function Initalize{
     }
 }
 
-function Measure-Request{
+function Measure-Request-Old{
     [cmdletbinding()]
     param(
         [Parameter(Mandatory=$true)]
@@ -593,7 +593,71 @@ function Measure-Request{
         catch{
             "3: $_.Exception" | Write-Warning
         }
-        $measure
+        
+        # $measure
+
+        # create an object with all the data and return it
+        New-Object -TypeName psobject -Property @{
+            Name = $name
+            Url = $url
+            Measure = $measure
+        }
+    }
+}
+
+function Measure-Request{
+    [cmdletbinding()]    
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$url,
+
+        [Parameter(Mandatory=$true)]
+        [string]$name,
+
+        [int]$numRetries = 10
+    )
+    process{
+        $count = 0
+        $measure = $null
+        $resp = $null
+        $statusCodeStr = "(null)"
+        do{
+            try{
+                $measure = Measure-Command { $resp = (Invoke-WebRequest $url) }
+            }
+            catch{
+                # ignore and try again
+                Write-Warning $_
+            }
+            if(-not $? -or ($resp -eq $null) -or ($resp.StatusCode -ne 200)){
+                if($resp -ne $null){
+                    $statusCodeStr = $resp.StatusCode
+                }
+
+                'Unable to complete web request, status code: [{0}]' -f $statusCodeStr | Write-Verbose                
+                Start-AzureWebsite -Name $name
+                Start-Sleep 2
+            }
+        }while(
+                ( ($resp -eq $null) -or ($resp.StatusCode -ne 200)) -and 
+                ($count++ -le $numRetries))
+
+        if( ($resp -eq $null) -or ($resp.StatusCode -ne 200)){
+            
+            if($resp -ne $null){
+                $statusCodeStr = $resp.StatusCode
+            }
+            throw ("`r`nReceived an unexpected http status code [{0}] for url [{1}]`r`nIterations:{2}`r`nTotals:{3}`r`nSecond Request:{4}" -f $statusCodeStr,$url,$currentIteration,($totalMilli|Out-String),($totalMilliSecondReq|Out-String))
+        }
+
+        # $measure
+
+        # create an object with all the data and return it
+        New-Object -TypeName psobject -Property @{
+            Name = $name
+            Url = $url
+            Measure = $measure
+        }
     }
 }
 
@@ -669,7 +733,7 @@ function Measure-SiteResponseTimesForAll{
         [object[]]$sites,
 
         [Parameter(Position=2)]
-        [int]$numIterations = 10,
+        [int]$numIterations = 1,
 
         [Parameter(Position=3)]
         [int]$maxnumretries = 5
@@ -690,6 +754,7 @@ function Measure-SiteResponseTimesForAll{
         }
         #$maxnumretries = 5
         $currentIteration = 0
+        $allresult = @()
         try{
             1..$numIterations | % {
                 $currentIteration++
@@ -706,24 +771,34 @@ function Measure-SiteResponseTimesForAll{
                     $url | Write-Host -NoNewline
             
                     $measure = Measure-Request -url $url -numRetries $maxnumretries -name $siteobj.Name
-                    $totalMilli[$site]+= $measure.TotalMilliseconds
+                    $totalMilli[$site]+= $measure.Measure.TotalMilliseconds
 
                     $measureSecondReq = Measure-Request -url $url -numRetries $maxnumretries -name $siteobj.Name
-                    $totalMilliSecondReq[$site]+= $measureSecondReq.TotalMilliseconds
+                    $totalMilliSecondReq[$site]+= $measureSecondReq.Measure.TotalMilliseconds
 
-                    "`t{0} milliseconds, second request {1}" -f $measure.TotalMilliseconds,$measureSecondReq.TotalMilliseconds | Write-Host
+                    "`t{0} milliseconds, second request {1}" -f $measure.Measure.TotalMilliseconds,$measureSecondReq.Measure.TotalMilliseconds | Write-Host
+
+                    # return an object with the result
+                    $result = New-Object -TypeName psobject -Property @{
+                        FirstRequest = $measure
+                        SecondRequest = $measureSecondReq
+                    }
+
+                    $result
                 }
             }
 
+            <#
             'Average response time for [{0}] iterations' -f $numIterations | Write-Host
             $sitestotest | %{
                 $avgmilli = $totalMilli[$_]/$numIterations
                 $avgMilliSecondReq = $totalMilliSecondReq[$_]/$numIterations
                 '{0}: {1} milliseconds, second request {2} milliseconds' -f $_,$avgmilli,$avgMilliSecondReq | Write-Host
             }
+            #>
         }
         catch{
-            'An unepected error occurred {0}' -f $_.Exception
+            "An unepected error occurred {0}`r`n{1}" -f $_.Exception,(Get-PSCallStack|Out-String)
         }
     }
 }
