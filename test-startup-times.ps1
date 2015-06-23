@@ -589,10 +589,10 @@ function Measure-Request{
             Name = $name
             Url = $url
             Response = New-Object -TypeName psobject -Property @{
-                StatusCode = $resp.BaseResponse.StatusCode
-                ContentLength = $resp.BaseResponse.ContentLength
+                StatusCode = $resp.StatusCode
+                ContentLength = $resp.RawContentLength
             }
-            ResponseTime = $stopwatch.Elapsed
+            ResponseTime = $stopwatch.Elapsed.TotalMilliseconds
             NumAttempts = ($count+1)
         }
     }
@@ -618,36 +618,35 @@ function Measure-SiteResponseTimesForAll{
         #$numIterations = 1
         [hashtable]$totalMilli = @{}
         [hashtable]$totalMilliSecondReq = @{}
-        [hashtable]$azWebsites = @{}
+        [hashtable]$results = @{}
         $sitestotest | % {
             $totalMilli[$_] = 0
             $totalMilliSecondReq[$_]=0
-            $azWebsites[$_] = (Get-AzureWebsite -Name $_)
         }
-        #$maxnumretries = 5
         $currentIteration = 0
         $allresult = @()
         try{
             1..$numIterations | % {
                 $currentIteration++
-                foreach($site in $sitestotest){
+                foreach($site in $sites){
+                    #$sitename = $site.Name
                     # stop the site
-                    $siteobj = ($azWebsites[$site])
-                    $siteobj | Stop-AzureWebsite
+                    $siteobj = ($site.AzureSiteObj)
+                    Stop-AzureWebsite -Name ($site.Name)
                     # start the site
-                    $siteobj | Start-AzureWebsite
+                    Start-AzureWebsite -Name ($site.Name)
                     # give it a second to settle before making a request to avoid 502 errors
                     Start-Sleep -Seconds 2
                     # make a webrequest and time it
                     $url = ('http://{0}' -f $siteobj.EnabledHostNames[0])
 
                     $measure = Measure-Request -url $url -numRetries $maxnumretries -name $siteobj.Name
-                    $totalMilli[$site]+= $measure.ResponseTime.TotalMilliseconds
+                    $totalMilli[$site.Name]+= $measure.ResponseTime
 
                     $measureSecondReq = Measure-Request -url $url -numRetries $maxnumretries -name $siteobj.Name
-                    $totalMilliSecondReq[$site]+= $measureSecondReq.ResponseTime.TotalMilliseconds
+                    $totalMilliSecondReq[$site.Name]+= $measureSecondReq.ResponseTime
 
-                    "{0}: {1} milliseconds, second request {2}" -f $url,$measure.ResponseTime.TotalMilliseconds,$measureSecondReq.ResponseTime.TotalMilliseconds | Write-Verbose
+                    "{0}: {1} milliseconds, second request {2}" -f $url,$measure.ResponseTime,$measureSecondReq.ResponseTime | Write-Verbose
 
                     # return an object with the result
                     $result = New-Object -TypeName psobject -Property @{
@@ -655,7 +654,11 @@ function Measure-SiteResponseTimesForAll{
                         SecondRequest = $measureSecondReq
                     }
 
-                    $result
+                    if(-not $results.ContainsKey($site.Name)){
+                        $results[$site.Name]=@()
+                    }
+                    $results[$site.Name]+=$result
+                    $result | Write-Verbose
                 }
             }
 
@@ -667,6 +670,23 @@ function Measure-SiteResponseTimesForAll{
                 '{0}: {1} milliseconds, second request {2} milliseconds' -f $_,$avgmilli,$avgMilliSecondReq | Write-Host
             }
             #>
+            # create a summary object for each site
+            foreach($sitename in $sitestotest){
+                $avgmillifirst = (($results[$sitename].FirstRequest.ResponseTime|Measure-Object -Sum).Sum)
+                $avgmillisecond = (($results[$sitename].SecondRequest.ResponseTime|Measure-Object -Sum).Sum)
+                $totalattemptsfirstreq = (($results[$sitename].FirstRequest.NumAttempts|Measure-Object -Sum).Sum)
+                $totalattemptssecondreq = (($results[$sitename].SecondRequest.NumAttempts|Measure-Object -Sum).Sum)
+
+                # return the object
+                New-Object -TypeName psobject -Property @{
+                    Name = $sitename
+                    AverageFirstResponseMilli = $avgmillifirst
+                    AverageSecondResponseMilli = $avgmillisecond
+                    TotalNumAttemptsFirstResponse = $totalattemptsfirstreq
+                    TotalNumAttemptsSecondResponse = $totalattemptssecondreq
+                    RawResults = ($results[$site.Name])
+                }
+            }
         }
         catch{
             "An unepected error occurred {0}`r`n{1}" -f $_.Exception,(Get-PSCallStack|Out-String)
