@@ -551,13 +551,17 @@ function Measure-Request{
         $measure = $null
         $resp = $null
         $statusCodeStr = "(null)"
+        [System.Diagnostics.Stopwatch]$stopwatch = $null
         do{
             try{
-                $measure = Measure-Command { $resp = (Invoke-WebRequest $url) }
+                $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+                $resp = Invoke-WebRequest $url
+                $stopwatch.Stop()
+                [System.TimeSpan]$resptime = $stopwatch.Elapsed
             }
             catch{
                 # ignore and try again
-                Write-Warning $_
+                Write-Verbose $_
             }
             if(-not $? -or ($resp -eq $null) -or ($resp.StatusCode -ne 200)){
                 if($resp -ne $null){
@@ -580,14 +584,15 @@ function Measure-Request{
             throw ("`r`nReceived an unexpected http status code [{0}] for url [{1}]`r`nIterations:{2}`r`nTotals:{3}`r`nSecond Request:{4}" -f $statusCodeStr,$url,$currentIteration,($totalMilli|Out-String),($totalMilliSecondReq|Out-String))
         }
 
-        # $measure
-
         # create an object with all the data and return it
         New-Object -TypeName psobject -Property @{
             Name = $name
             Url = $url
-            Measure = $measure
-            Response = $resp
+            Response = New-Object -TypeName psobject -Property @{
+                StatusCode = $resp.BaseResponse.StatusCode
+                ContentLength = $resp.BaseResponse.ContentLength
+            }
+            ResponseTime = $stopwatch.Elapsed            
         }
     }
 }
@@ -637,12 +642,12 @@ function Measure-SiteResponseTimesForAll{
                     $url | Write-Host -NoNewline
             
                     $measure = Measure-Request -url $url -numRetries $maxnumretries -name $siteobj.Name
-                    $totalMilli[$site]+= $measure.Measure.TotalMilliseconds
+                    $totalMilli[$site]+= $measure.ResponseTime.TotalMilliseconds
 
                     $measureSecondReq = Measure-Request -url $url -numRetries $maxnumretries -name $siteobj.Name
-                    $totalMilliSecondReq[$site]+= $measureSecondReq.Measure.TotalMilliseconds
+                    $totalMilliSecondReq[$site]+= $measureSecondReq.ResponseTime.TotalMilliseconds
 
-                    "`t{0} milliseconds, second request {1}" -f $measure.Measure.TotalMilliseconds,$measureSecondReq.Measure.TotalMilliseconds | Write-Host
+                    "`t{0} milliseconds, second request {1}" -f $measure.ResponseTime.TotalMilliseconds,$measureSecondReq.ResponseTime.TotalMilliseconds | Write-Host
 
                     # return an object with the result
                     $result = New-Object -TypeName psobject -Property @{
@@ -679,9 +684,9 @@ function Measure-SiteResponseTimesForAll{
 $sites = @(
     New-SiteObject -name publishtestwap -projectpath $samplewapproj -projectType WAP
     New-SiteObject -name publishtestdnx-clr-withsource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $true
-    New-SiteObject -name publishtestdnx-coreclr-withsource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $true
-    New-SiteObject -name publishtestdnx-clr-nosource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false
-    New-SiteObject -name publishtestdnx-coreclr-nosource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $false
+    #New-SiteObject -name publishtestdnx-coreclr-withsource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $true
+    #New-SiteObject -name publishtestdnx-clr-nosource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false
+    #New-SiteObject -name publishtestdnx-coreclr-nosource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $false
 )
 
 try{
