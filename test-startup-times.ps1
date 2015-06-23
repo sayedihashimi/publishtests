@@ -704,9 +704,9 @@ function Measure-SiteResponseTimesForAll{
 $sites = @(
     New-SiteObject -name publishtestwap -projectpath $samplewapproj -projectType WAP
     New-SiteObject -name publishtestdnx-clr-withsource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $true
-    #New-SiteObject -name publishtestdnx-coreclr-withsource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $true
-    #New-SiteObject -name publishtestdnx-clr-nosource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false
-    #New-SiteObject -name publishtestdnx-coreclr-nosource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $false
+    New-SiteObject -name publishtestdnx-coreclr-withsource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $true
+    New-SiteObject -name publishtestdnx-clr-nosource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false
+    New-SiteObject -name publishtestdnx-coreclr-nosource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $false
 )
 
 try{
@@ -722,8 +722,11 @@ try{
 
     $global:testresult = $result
 
-    # display the result at the end
+    # return the result to the caller
     $result
+
+    # write out a summary at the end
+    $result | Select-Object Name,AverageFirstResponseMilli,AverageSecondResponseMilli | Format-Table | Out-String | Write-Host -ForegroundColor Green
 }
 catch{
     $msg = $_.Exception.ToString()
