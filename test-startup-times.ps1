@@ -605,10 +605,10 @@ function Measure-SiteResponseTimesForAll{
         [object[]]$sites,
 
         [Parameter(Position=2)]
-        [int]$numIterations = 2,
+        [int]$numIterations = 25,
 
         [Parameter(Position=3)]
-        [int]$maxnumretries = 5
+        [int]$maxnumretries = 10
     )
     process{
         [string[]]$sitestotest = $sites.Name
@@ -672,8 +672,8 @@ function Measure-SiteResponseTimesForAll{
             #>
             # create a summary object for each site
             foreach($sitename in $sitestotest){
-                $avgmillifirst = (($results[$sitename].FirstRequest.ResponseTime|Measure-Object -Sum).Sum)
-                $avgmillisecond = (($results[$sitename].SecondRequest.ResponseTime|Measure-Object -Sum).Sum)
+                $avgmillifirst = (($results[$sitename].FirstRequest.ResponseTime|Measure-Object -Sum).Sum)/$numIterations
+                $avgmillisecond = (($results[$sitename].SecondRequest.ResponseTime|Measure-Object -Sum).Sum)/$numIterations
                 $totalattemptsfirstreq = (($results[$sitename].FirstRequest.NumAttempts|Measure-Object -Sum).Sum)
                 $totalattemptssecondreq = (($results[$sitename].SecondRequest.NumAttempts|Measure-Object -Sum).Sum)
 
@@ -684,7 +684,7 @@ function Measure-SiteResponseTimesForAll{
                     AverageSecondResponseMilli = $avgmillisecond
                     TotalNumAttemptsFirstResponse = $totalattemptsfirstreq
                     TotalNumAttemptsSecondResponse = $totalattemptssecondreq
-                    RawResults = ($results[$site.Name])
+                    RawResults = ($results[$sitename])
                 }
             }
         }
@@ -693,8 +693,6 @@ function Measure-SiteResponseTimesForAll{
         }
     }
 }
-
-
 
 # begin script
 
