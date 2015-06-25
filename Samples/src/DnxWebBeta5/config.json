@@ -1,0 +1,10 @@
+{
+    "AppSettings": {
+        "SiteTitle": "DnxWebBeta5"
+    },
+    "Data": {
+        "DefaultConnection": {
+            "ConnectionString": "Server=(localdb)\\mssqllocaldb;Database=aspnet5-DnxWebBeta5-7ed379c6-5c6f-4e7e-b10e-c9a35ce8b91d;Trusted_Connection=True;MultipleActiveResultSets=true"
+        }
+    }
+}

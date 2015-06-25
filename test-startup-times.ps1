@@ -99,7 +99,7 @@ function New-SiteObject{
         [bool]$dnxpublishsource = $true,
 
         [Parameter(Position=7)]
-        [string]$SolutionRoot
+        [System.IO.DirectoryInfo]$SolutionRoot
     )
     process{
         $siteobj = New-Object -TypeName psobject -Property @{
@@ -230,10 +230,10 @@ function Publish-DnxSite{
                 Push-Location
                 try{
                     Set-Location $projpath.Directory.FullName
-                    & dnu restore
+                    & dnu restore --quiet
                     # call dnu.cmd to publish the site to a folder
                     $dnxstring = ('dnx-{0}-win-{1}.{2}' -f $siteobj.DnxRuntime,$siteobj.DnxBitness,$dnxversion)
-                    $pubargs = ('publish','-o',$tempfolder.FullName,'--configuration','Release','--wwwroot-out','wwwroot','--runtime',$dnxstring)
+                    $pubargs = ('publish','-o',$tempfolder.FullName,'--configuration','Release','--wwwroot-out','wwwroot','--runtime',$dnxstring,'--quiet')
                     Invoke-CommandString -command (Join-Path $dnxbin 'dnu.cmd') -commandArgs $pubargs
                     # now publish from that folder to the remote azure site
 
@@ -282,7 +282,8 @@ function Publish-WapSite{
             if(-not [string]::IsNullOrEmpty($siteobj.SolutionRoot)){
                 try{
                     Push-Location
-                    Set-Location (join-path $siteobj.projectpath.Directory.Fullname $siteobj.SolutionRoot)
+                    Set-Location $siteobj.SolutionRoot
+                    'Restoring nuget packages for sln root [{0}]' -f $siteobj.SolutionRoot | Write-Verbose
                     Invoke-CommandString -command (Get-Nuget) -commandArgs @('restore')
                 }
                 finally{
@@ -501,15 +502,6 @@ function Ensure-ClientToolsInstalled{
             '1: Unable to find npm at expected location [{0}]' -f $npmpath | Write-Warning
         }
 
-        <#
-        $npmexe = "$env:ProgramFiles\nodejs\npm.cmd"
-        if(Test-Path $npmexe){
-            Set-Alias node $npmexe
-        }
-        else{
-            throw ('Unable to find npm.exe at [{0}]' -f $npmexe)
-        }
-        #>
         if(-not (Test-Path env:NODE_PATH)){
             $nodepath = "$env:APPDATA\npm\node_modules\"
             if(Test-Path $nodepath){
@@ -568,9 +560,10 @@ function Measure-Request{
                     $statusCodeStr = $resp.StatusCode
                 }
 
-                'Unable to complete web request, status code: [{0}]' -f $statusCodeStr | Write-Verbose                
+                'Unable to complete web request, status code: [{0}]' -f $statusCodeStr | Write-Verbose
+                Stop-AzureWebsite -Name $name
                 Start-AzureWebsite -Name $name
-                Start-Sleep 2
+                Start-Sleep ($count+1)
             }
         }while(
                 ( ($resp -eq $null) -or ($resp.StatusCode -ne 200)) -and 
@@ -605,31 +598,20 @@ function Measure-SiteResponseTimesForAll{
         [object[]]$sites,
 
         [Parameter(Position=2)]
-        [int]$numIterations = 25,
+        [int]$numIterations = 10,
 
         [Parameter(Position=3)]
         [int]$maxnumretries = 10
     )
     process{
         [string[]]$sitestotest = $sites.Name
-        
-        $totalMilliTimeWap = 0
-        $totalMilliTimeV5 = 0
-        #$numIterations = 1
-        [hashtable]$totalMilli = @{}
-        [hashtable]$totalMilliSecondReq = @{}
         [hashtable]$results = @{}
-        $sitestotest | % {
-            $totalMilli[$_] = 0
-            $totalMilliSecondReq[$_]=0
-        }
+
         $currentIteration = 0
-        $allresult = @()
         try{
             1..$numIterations | % {
                 $currentIteration++
                 foreach($site in $sites){
-                    #$sitename = $site.Name
                     # stop the site
                     $siteobj = ($site.AzureSiteObj)
                     Stop-AzureWebsite -Name ($site.Name)
@@ -637,14 +619,10 @@ function Measure-SiteResponseTimesForAll{
                     Start-AzureWebsite -Name ($site.Name)
                     # give it a second to settle before making a request to avoid 502 errors
                     Start-Sleep -Seconds 2
-                    # make a webrequest and time it
+
                     $url = ('http://{0}' -f $siteobj.EnabledHostNames[0])
-
                     $measure = Measure-Request -url $url -numRetries $maxnumretries -name $siteobj.Name
-                    $totalMilli[$site.Name]+= $measure.ResponseTime
-
                     $measureSecondReq = Measure-Request -url $url -numRetries $maxnumretries -name $siteobj.Name
-                    $totalMilliSecondReq[$site.Name]+= $measureSecondReq.ResponseTime
 
                     "{0}: {1} milliseconds, second request {2}" -f $url,$measure.ResponseTime,$measureSecondReq.ResponseTime | Write-Verbose
 
@@ -662,14 +640,6 @@ function Measure-SiteResponseTimesForAll{
                 }
             }
 
-            <#
-            'Average response time for [{0}] iterations' -f $numIterations | Write-Host
-            $sitestotest | %{
-                $avgmilli = $totalMilli[$_]/$numIterations
-                $avgMilliSecondReq = $totalMilliSecondReq[$_]/$numIterations
-                '{0}: {1} milliseconds, second request {2} milliseconds' -f $_,$avgmilli,$avgMilliSecondReq | Write-Host
-            }
-            #>
             # create a summary object for each site
             foreach($sitename in $sitestotest){
                 $avgmillifirst = (($results[$sitename].FirstRequest.ResponseTime|Measure-Object -Sum).Sum)/$numIterations
@@ -698,9 +668,13 @@ function Measure-SiteResponseTimesForAll{
 
 [System.IO.FileInfo]$samplewapproj = (Join-Path $scriptDir 'samples\src\WapMvc46\WapMvc46.csproj')
 [System.IO.FileInfo]$samplednxproj = (Join-Path $scriptDir 'samples\src\DnxWebApp\DnxWebApp.xproj')
+[System.IO.FileInfo]$samplebeta5xproj = (Join-Path $scriptDir 'samples\src\DnxWebBeta5\DnxWebBeta5.xproj')
 
 $sites = @(
-    New-SiteObject -name publishtestwap -projectpath $samplewapproj -projectType WAP
+    New-SiteObject -name publishtestwap -projectpath $samplewapproj -projectType WAP -SolutionRoot ($samplewapproj.Directory.Parent.Parent.FullName)
+
+    New-SiteObject -name publishtestdnx-beta5-clr-nosource -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false -dnxversion 1.0.0-beta5
+    
     New-SiteObject -name publishtestdnx-clr-withsource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $true
     New-SiteObject -name publishtestdnx-coreclr-withsource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $true
     New-SiteObject -name publishtestdnx-clr-nosource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false
@@ -708,13 +682,15 @@ $sites = @(
 )
 
 try{
+    $starttime = Get-Date
+    'Start time: [{0}]' -f ($starttime.ToString('hh:mm:ss tt')) | Write-Verbose
     Initalize
 
-    # $sites | Ensure-SiteExists
+    $sites | Ensure-SiteExists
     $sites | Populate-AzureWebSiteObjects
 
-    #$sites | Delete-RemoteSiteContent
-    #$sites | Publish-Site
+    $sites | Delete-RemoteSiteContent
+    $sites | Publish-Site
 
     $result = Measure-SiteResponseTimesForAll -sites $sites
 
@@ -725,6 +701,9 @@ try{
 
     # write out a summary at the end
     $result | Select-Object Name,AverageFirstResponseMilli,AverageSecondResponseMilli | Format-Table | Out-String | Write-Host -ForegroundColor Green
+
+    $endtime = Get-Date
+    'End time: [{0}]. Time spent [{1}] seconds' -f $endtime.ToString('hh:mm:ss tt'),($endtime - $starttime).TotalSeconds | Write-Verbose
 }
 catch{
     $msg = $_.Exception.ToString()
