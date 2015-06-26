@@ -4,15 +4,18 @@ param(
     [System.IO.FileInfo]$reportfilepath,
 
     [Parameter(Position=1)]
-    [string]$hostingPlanName = 'teststartuptimeshostingplan',
+    [string]$testsessionid = [DateTime]::Now.Ticks,
 
     [Parameter(Position=2)]
-    [string]$location='East US',
+    [string]$hostingPlanName = 'teststartuptimeshostingplan',
 
     [Parameter(Position=3)]
-    [string]$websiteSku = 'Basic',
+    [string]$location='East US',
 
     [Parameter(Position=4)]
+    [string]$websiteSku = 'Basic',
+
+    [Parameter(Position=5)]
     [string]$azurepsapiversion = '2014-04-01-preview'
 )
 
@@ -632,12 +635,20 @@ function Initalize{
 function Measure-Request{
     [cmdletbinding()]    
     param(
-        [Parameter(Mandatory=$true)]
+        [Parameter(Mandatory=$true,Position=0)]
         [string]$url,
 
-        [Parameter(Mandatory=$true)]
+        [Parameter(Mandatory=$true,Position=1)]
         [string]$name,
 
+        [Parameter(Position=2)]
+        [string]$testsessionid = $script:testsessionid,
+
+        [Parameter(Position=3)]
+        [ValidateSet('first','second')]
+        [string]$whichrequest,
+
+        [Parameter(Position=4)]
         [int]$numRetries = 10
     )
     process{
@@ -646,10 +657,14 @@ function Measure-Request{
         $resp = $null
         $statusCodeStr = "(null)"
         [System.Diagnostics.Stopwatch]$stopwatch = $null
+
+        # http://publishtestdnx-beta5-clr-nosource.azurewebsites.net/?testsessionid=12345&testrequest=first
+        [string]$fullurl = ('{0}?testsessionid={1}&testrequest={2}' -f $url,$testsessionid,$whichrequest)
+
         do{
             try{
                 $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-                $resp = Invoke-WebRequest $url
+                $resp = Invoke-WebRequest $fullurl
                 $stopwatch.Stop()
                 [System.TimeSpan]$resptime = $stopwatch.Elapsed
             }
@@ -676,13 +691,13 @@ function Measure-Request{
             if($resp -ne $null){
                 $statusCodeStr = $resp.StatusCode
             }
-            throw ("`r`nReceived an unexpected http status code [{0}] for url [{1}]`r`nIterations:{2}`r`nTotals:{3}`r`nSecond Request:{4}" -f $statusCodeStr,$url,$currentIteration,($totalMilli|Out-String),($totalMilliSecondReq|Out-String))
+            throw ("`r`nReceived an unexpected http status code [{0}] for url [{1}]`r`nIterations:{2}`r`nTotals:{3}`r`nSecond Request:{4}" -f $statusCodeStr,$fullurl,$currentIteration,($totalMilli|Out-String),($totalMilliSecondReq|Out-String))
         }
 
         # create an object with all the data and return it
         New-Object -TypeName psobject -Property @{
             Name = $name
-            Url = $url
+            Url = $fullurl
             Response = New-Object -TypeName psobject -Property @{
                 StatusCode = $resp.StatusCode
                 ContentLength = $resp.RawContentLength
@@ -699,8 +714,11 @@ function Measure-SiteResponseTimesForAll{
         [Parameter(Mandatory=$true,Position=0)]
         [object[]]$sites,
 
+        [Parameter(Position=1)]
+        [string]$testsessionid = $script:testsessionid,
+
         [Parameter(Position=2)]
-        [int]$numIterations = 1,
+        [int]$numIterations = 2,
 
         [Parameter(Position=3)]
         [int]$maxnumretries = 10
@@ -723,8 +741,8 @@ function Measure-SiteResponseTimesForAll{
                     Start-Sleep -Seconds 2
 
                     $url = ('http://{0}' -f $siteobj.EnabledHostNames[0])
-                    $measure = Measure-Request -url $url -numRetries $maxnumretries -name $siteobj.Name
-                    $measureSecondReq = Measure-Request -url $url -numRetries $maxnumretries -name $siteobj.Name
+                    $measure = Measure-Request -url $url -numRetries $maxnumretries -name $siteobj.Name -testsessionid $script:testsessionid -whichrequest first
+                    $measureSecondReq = Measure-Request -url $url -numRetries $maxnumretries -name $siteobj.Name -testsessionid $script:testsessionid -whichrequest second
 
                     "{0}: {1} milliseconds, second request {2}" -f $url,$measure.ResponseTime,$measureSecondReq.ResponseTime | Write-Verbose
 
