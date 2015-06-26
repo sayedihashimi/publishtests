@@ -1,5 +1,8 @@
 ﻿[cmdletbinding()]
-param()
+param(
+    [Parameter(Position=0)]
+    [System.IO.FileInfo]$reportfilepath
+)
 
 Set-StrictMode -Version Latest
 
@@ -7,6 +10,10 @@ function InternalGet-ScriptDirectory{
     split-path (((Get-Variable MyInvocation -Scope 1).Value).MyCommand.Path)
 }
 $scriptDir = ((InternalGet-ScriptDirectory) + "\")
+
+if($reportfilepath -eq $null){
+    $reportfilepath = (Join-Path $scriptDir 'startuptimes.json')
+}
 
 [System.IO.FileInfo]$dnvmpath = (Join-Path $env:USERPROFILE '.dnx\bin\dnvm.cmd')
 $dnxversion = '1.0.0-beta4'
@@ -99,6 +106,9 @@ function New-SiteObject{
         [bool]$dnxpublishsource = $true,
 
         [Parameter(Position=7)]
+        [string]$dnxfeed,
+
+        [Parameter(Position=8)]
         [System.IO.DirectoryInfo]$SolutionRoot
     )
     process{
@@ -110,7 +120,7 @@ function New-SiteObject{
             DnxVersion = $dnxversion
             DnxBitness = $null
             DnxRuntime = $null
-
+            DnxFeed = $dnxfeed
             # only needed for WAP project so that nuget restore can be called
             SolutionRoot = $SolutionRoot
 
@@ -155,7 +165,7 @@ function Ensure-SiteExists{
             # try and get the website if it doesn't return a value then create it
             if((Get-AzureWebsite -Name $siteobj.Name) -eq $null){
                 'Creating site [{0}]' -f $siteobj.Name | Write-Verbose
-                New-AzureWebsite -Name $siteobj.Name | Out-Null
+                New-AzureWebsite -Name $siteobj.Name -Location 'East US' | Out-Null
             }
         }
     }
@@ -187,6 +197,7 @@ function Publish-DnxSite{
         [Parameter(Position=0,ValueFromPipeline=$true)]
         [object[]]$site
     )
+
     process{
         foreach($siteobj in $site){
             # reset path to the original value
@@ -199,55 +210,71 @@ function Publish-DnxSite{
             [System.IO.FileInfo]$projpath = $siteobj.ProjectPath
             if($siteobj.ProjectType -eq 'DNX'){
                 'Publishing DNX project at [{0}] to [{1}]' -f $siteobj.projectpath,$siteobj.Name | Write-Verbose
-                # need to set dnx for the project
-
-
-                # command: dnvm install 1.0.0-beta4 -arch x86 -runtime clr
-                $cmdargs = @('install',$siteobj.DnxVersion,'-arch',$siteobj.DnxBitness,'-runtime',$siteobj.DnxRuntime)
-                'Installing dnvm for site [{0}]' -f $siteobj.Name | Write-Verbose
-                Invoke-CommandString -command ($dnvmpath.FullName) -commandArgs $cmdargs
-
-                # set this as active dnvm
-                $cmdargs = @('use',$siteobj.DnxVersion,'-arch',$siteobj.DnxBitness,'-runtime',$siteobj.DnxRuntime)
-                Invoke-CommandString -command ($dnvmpath.FullName) -commandArgs $cmdargs
-
-                # add dnx bin to the path C:\Users\sayedha\.dnx\runtimes\dnx-clr-win-x64.1.0.0-beta4\bin
-                $dnxbin = (Join-Path $env:USERPROFILE ('.dnx\runtimes\dnx-{0}-win-{1}.{2}\bin' -f $siteobj.DnxRuntime,$siteobj.DnxBitness,$dnxversion))
-                if(-not (Test-Path $dnxbin)){
-                    throw ('dnx bin not found at [{0}]' -f $dnxbin)
-                }
-
-                Add-Path $dnxbin | Out-Null
-
-                # call publish to a temp folder
-                [System.IO.FileInfo]$tempfolder = (Join-Path ([System.IO.Path]::GetTempPath()) ('{0}' -f $siteobj.Name) )
-                if(Test-Path $tempfolder){
-                    Remove-Item $tempfolder -Recurse
-                }
-
-                New-Item -ItemType Directory -Path $tempfolder
-
-                Push-Location
                 try{
-                    Set-Location $projpath.Directory.FullName
-                    & dnu restore --quiet
-                    # call dnu.cmd to publish the site to a folder
-                    $dnxstring = ('dnx-{0}-win-{1}.{2}' -f $siteobj.DnxRuntime,$siteobj.DnxBitness,$dnxversion)
-                    $pubargs = ('publish','-o',$tempfolder.FullName,'--configuration','Release','--wwwroot-out','wwwroot','--runtime',$dnxstring,'--quiet')
-                    Invoke-CommandString -command (Join-Path $dnxbin 'dnu.cmd') -commandArgs $pubargs
-                    # now publish from that folder to the remote azure site
+                    $olddnxfeed = $env:DNX_FEED
+                    if(-not [string]::IsNullOrWhiteSpace($siteobj.DnxFeed)){
+                        $env:DNX_FEED = $siteobj.DnxFeed
+                    }
 
-                    [string]$username = ($siteobj.AzureSiteObj.SiteProperties.Properties|%{ if($_.Name -eq 'PublishingUsername'){$_.Value} })
-                    [string]$pubpwd = ($siteobj.AzureSiteObj.SiteProperties.Properties|%{ if($_.Name -eq 'PublishingPassword'){$_.Value} })
-                    [string]$msdeployurl = ('{0}:443' -f ($siteobj.AzureSiteObj.SiteProperties.Properties|%{ if($_.Name -eq 'RepositoryUri'){$_.Value} }) )
-                    $pubproperties = @{'WebPublishMethod'='MSDeploy';'MSDeployServiceUrl'=$msdeployurl;'DeployIisAppPath'=$siteobj.Name;'Username'=$username;'Password'=$pubpwd;'WebRoot'='wwwroot'}
+                    # command: dnvm install 1.0.0-beta4 -arch x86 -runtime clr
+                    $cmdargs = @('install',$siteobj.DnxVersion,'-arch',$siteobj.DnxBitness,'-runtime',$siteobj.DnxRuntime)
+                    'Installing dnvm for site [{0}]' -f $siteobj.Name | Write-Verbose
+                    Invoke-CommandString -command ($dnvmpath.FullName) -commandArgs $cmdargs
 
-                    Publish-AspNet -packOutput ($tempfolder.FullName) -publishProperties $pubproperties
+                    # set this as active dnvm
+                    $cmdargs = @('use',$siteobj.DnxVersion,'-arch',$siteobj.DnxBitness,'-runtime',$siteobj.DnxRuntime)
+                    Invoke-CommandString -command ($dnvmpath.FullName) -commandArgs $cmdargs
+
+                    # add dnx bin to the path C:\Users\sayedha\.dnx\runtimes\dnx-clr-win-x64.1.0.0-beta4\bin
+                    $dnxbin = (Join-Path $env:USERPROFILE ('.dnx\runtimes\dnx-{0}-win-{1}.{2}\bin' -f $siteobj.DnxRuntime,$siteobj.DnxBitness,$dnxversion))
+                    if(-not (Test-Path $dnxbin)){
+                        throw ('dnx bin not found at [{0}]' -f $dnxbin)
+                    }
+
+                    Add-Path $dnxbin | Out-Null
+
+                    # call publish to a temp folder
+                    [System.IO.FileInfo]$tempfolder = (Join-Path ([System.IO.Path]::GetTempPath()) ('{0}' -f $siteobj.Name) )
+                    if(Test-Path $tempfolder){
+                        Remove-Item $tempfolder -Recurse
+                    }
+
+                    New-Item -ItemType Directory -Path $tempfolder | Out-Null
+
+                    Push-Location
+                    try{
+                        Set-Location $projpath.Directory.FullName
+                        $restoreargs = @('restore','--quiet')
+                        if(-not [string]::IsNullOrWhiteSpace($siteobj.DnxFeed)){
+                            $restoreargs += '-f'
+                            $restoreargs += 'https://nuget.org/api/v2/'
+                        }
+
+                        # & dnu restore $restoreargs
+                        Invoke-CommandString -command (join-path $dnxbin 'dnu.cmd') -commandArgs $restoreargs
+
+                        # call dnu.cmd to publish the site to a folder
+                        $dnxstring = ('dnx-{0}-win-{1}.{2}' -f $siteobj.DnxRuntime,$siteobj.DnxBitness,$dnxversion)
+                        $pubargs = ('publish','-o',$tempfolder.FullName,'--configuration','Release','--wwwroot-out','wwwroot','--runtime',$dnxstring,'--quiet')
+                        Invoke-CommandString -command (Join-Path $dnxbin 'dnu.cmd') -commandArgs $pubargs
+                        # now publish from that folder to the remote azure site
+
+                        [string]$username = ($siteobj.AzureSiteObj.SiteProperties.Properties|%{ if($_.Name -eq 'PublishingUsername'){$_.Value} })
+                        [string]$pubpwd = ($siteobj.AzureSiteObj.SiteProperties.Properties|%{ if($_.Name -eq 'PublishingPassword'){$_.Value} })
+                        [string]$msdeployurl = ('{0}:443' -f ($siteobj.AzureSiteObj.SiteProperties.Properties|%{ if($_.Name -eq 'RepositoryUri'){$_.Value} }) )
+                        $pubproperties = @{'WebPublishMethod'='MSDeploy';'MSDeployServiceUrl'=$msdeployurl;'DeployIisAppPath'=$siteobj.Name;'Username'=$username;'Password'=$pubpwd;'WebRoot'='wwwroot'}
+
+                        Publish-AspNet -packOutput ($tempfolder.FullName) -publishProperties $pubproperties
+                    }
+                    finally{
+                        Pop-Location
+                    }
                 }
                 finally{
-                    Pop-Location
+                    if(Test-Path env:DNX_FEED){
+                        $env:DNX_FEED = $olddnxfeed
+                    }
                 }
-
             }
             else{
                 throw ('Unable to publish site with project type [{0}], expected ''DNX''' -f $siteobj.ProjectType)
@@ -598,7 +625,7 @@ function Measure-SiteResponseTimesForAll{
         [object[]]$sites,
 
         [Parameter(Position=2)]
-        [int]$numIterations = 10,
+        [int]$numIterations = 1,
 
         [Parameter(Position=3)]
         [int]$maxnumretries = 10
@@ -664,6 +691,22 @@ function Measure-SiteResponseTimesForAll{
     }
 }
 
+function CreateReport{
+    [cmdletbinding()]
+    param(
+        [Parameter(Position=0,Mandatory=$true)]
+        [ValidateNotNull()]
+        $testresult,
+
+        [Parameter(Position=1,Mandatory=$true)]
+        [ValidateNotNull()]
+        [System.IO.FileInfo]$reportpath
+    )
+    process{
+        $testresult | ConvertTo-Json -Depth 100 |% {$_.Replace('  ',' ')} | Out-File $reportpath -Force
+    }
+}
+
 # begin script
 
 [System.IO.FileInfo]$samplewapproj = (Join-Path $scriptDir 'samples\src\WapMvc46\WapMvc46.csproj')
@@ -673,12 +716,15 @@ function Measure-SiteResponseTimesForAll{
 $sites = @(
     New-SiteObject -name publishtestwap -projectpath $samplewapproj -projectType WAP -SolutionRoot ($samplewapproj.Directory.Parent.Parent.FullName)
 
-    New-SiteObject -name publishtestdnx-beta5-clr-nosource -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false -dnxversion 1.0.0-beta5
-    
-    New-SiteObject -name publishtestdnx-clr-withsource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $true
-    New-SiteObject -name publishtestdnx-coreclr-withsource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $true
-    New-SiteObject -name publishtestdnx-clr-nosource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false
-    New-SiteObject -name publishtestdnx-coreclr-nosource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $false
+    New-SiteObject -name publishtestdnx-beta5-clr-withsource -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $true -dnxversion 1.0.0-beta5 -dnxfeed 'https://www.myget.org/F/aspnetbeta5/api/v2'
+    New-SiteObject -name publishtestdnx-beta5-coreclr-withsource -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $true -dnxversion 1.0.0-beta5 -dnxfeed 'https://www.myget.org/F/aspnetbeta5/api/v2'
+    New-SiteObject -name publishtestdnx-beta5-clr-nosource -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false -dnxversion 1.0.0-beta5 -dnxfeed 'https://www.myget.org/F/aspnetbeta5/api/v2'
+    New-SiteObject -name publishtestdnx-beta5-coreclr-nosource -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false -dnxversion 1.0.0-beta5 -dnxfeed 'https://www.myget.org/F/aspnetbeta5/api/v2'
+
+    New-SiteObject -name publishtestdnx-beta4-clr-withsource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $true
+    New-SiteObject -name publishtestdnx-beta4-coreclr-withsource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $true
+    New-SiteObject -name publishtestdnx-beta4-clr-nosource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false
+    New-SiteObject -name publishtestdnx-beta4-coreclr-nosource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $false
 )
 
 try{
