@@ -1,7 +1,19 @@
 ﻿[cmdletbinding()]
 param(
     [Parameter(Position=0)]
-    [System.IO.FileInfo]$reportfilepath
+    [System.IO.FileInfo]$reportfilepath,
+
+    [Parameter(Position=1)]
+    [string]$hostingPlanName = 'teststartuptimeshostingplan',
+
+    [Parameter(Position=2)]
+    [string]$location='East US',
+
+    [Parameter(Position=3)]
+    [string]$websiteSku = 'Basic',
+
+    [Parameter(Position=4)]
+    [string]$azurepsapiversion = '2014-04-01-preview'
 )
 
 Set-StrictMode -Version Latest
@@ -157,7 +169,10 @@ function Ensure-SiteExists{
     param(
         [Parameter(Mandatory=$true,Position=0,ValueFromPipeline=$true)]
         [ValidateNotNull()]
-        [object[]]$site
+        [object[]]$site,
+
+        [Parameter(Position=1)]
+        [string]$location = $script:location
     )
     process{
         foreach($siteobj in $site){
@@ -165,8 +180,68 @@ function Ensure-SiteExists{
             # try and get the website if it doesn't return a value then create it
             if((Get-AzureWebsite -Name $siteobj.Name) -eq $null){
                 'Creating site [{0}]' -f $siteobj.Name | Write-Verbose
-                New-AzureWebsite -Name $siteobj.Name -Location 'East US' | Out-Null
+                Create-Site -sitenames $siteobj.Name -location $location
             }
+        }
+    }
+}
+
+function Create-Site{
+    param(
+        [Parameter(Mandatory=$true,Position=0,ValueFromPipeline=$true)]
+        [ValidateNotNull()]
+        [object[]]$sitenames,
+
+        [Parameter(Position=1)]
+        [string]$hostingPlanName = 'teststartuptimeshostingplan',
+
+        [Parameter(Position=2)]
+        [string]$location='East US',
+
+        [Parameter(Position=3)]
+        [string]$websiteSku = 'Basic',
+
+        [Parameter(Position=4)]
+        [string]$azurepsapiversion = '2014-04-01-preview'
+    )
+    process{
+        $hostingplan = $null
+        # make sure that the hosting plan exists, if not create it
+        try{
+            Switch-AzureMode AzureResourceManager
+            $hostingplan = Get-AzureResource -ResourceName $hostingPlanName -OutputObjectFormat New -ApiVersion $azurepsapiversion
+            if(-not $hostingplan){
+                try{
+                    'Creating hosting plan named [{0}]' -f $hostingPlanName | Write-Verbose
+                    $resourceGroupName = ('Default-Web-{0}' -f $location.Replace(' ',''))
+                    $hostingplanprops=@{'name'= $hostingPlanName;'sku'= $websiteSku;'workerSize'= '0';'numberOfWorkers'= 1}
+                    $hostingplan = New-AzureResource -Name $hostingPlanName -ResourceGroupName $resourceGroupName -ResourceType Microsoft.Web/serverFarms -Location $location -PropertyObject $hostingplanprops -OutputObjectFormat New -ApiVersion $azurepsapiversion -Force
+                }
+                catch{
+                    throw ('Unable to create hosting plan [{0}]. Exception: {1}' -f $hostingPlanName, $_.Exception)
+                }
+            }
+
+            $resourceGroupName = ('Default-Web-{0}' -f $location.Replace(' ',''))
+            foreach($name in $sitenames){
+                try{
+                    'Creating new website [{0}]' -f $name  | Write-Verbose
+                    # New-AzureResource -name $name -ResourceType 'Microsoft.Web/sites' -ResourceGroupName $resourceGroupName -Location $location  -PropertyObject @{'serverFarmId'=$hostingplan.ResourceId} -ApiVersion $azurepsapiversion
+                    New-AzureResource -name $name -ResourceType 'Microsoft.Web/sites' -ResourceGroupName $resourceGroupName -Location $location  -PropertyObject @{'serverFarm'=$hostingplan.ResourceName} -OutputObjectFormat New -ApiVersion $azurepsapiversion -Force
+                }
+                catch{
+                    throw ('Unable to create hosting plan [{0}]. Exception: {1}' -f $name, $_.Exception)
+                }
+            }
+        }
+        finally{
+            Switch-AzureMode AzureServiceManagement
+        }
+
+        foreach($name in $sitenames){
+            # configure http logging
+            # TODO: How to do this with AzureResoruceManager?
+            Set-AzureWebsite -Name $name -HttpLoggingEnabled $true
         }
     }
 }
