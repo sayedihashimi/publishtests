@@ -16,7 +16,13 @@ param(
     [string]$websiteSku = 'Basic',
 
     [Parameter(Position=5)]
-    [string]$azurepsapiversion = '2014-04-01-preview'
+    [string]$azurepsapiversion = '2014-04-01-preview',
+
+    [Parameter(Position=6)]
+    $numIterations = 25,
+
+    [Parameter(Position=6)]
+    [bool]$deletelogfiles = $false
 )
 
 Set-StrictMode -Version Latest
@@ -708,6 +714,67 @@ function Measure-Request{
     }
 }
 
+function Get-ServerResponseTimesFromLog{
+    [cmdletbinding()]
+    param(
+        [Parameter(Mandatory=$true,Position=0,ValueFromPipeline=$true)]
+        [string[]]$sitename,
+
+        [Parameter(Position=1)]
+        $testsessionid = $script:testsessionid,
+
+        [Parameter(Position=2)]
+        $numIterations = $script:numIterations
+    )
+    begin{
+        Add-Type -assembly "system.io.compression.filesystem"
+    }
+    process{
+        foreach($name in $sitename){
+            try{
+                # download the log files to a temp folder            
+                [System.IO.FileInfo]$tempfolder = (Join-Path ([System.IO.Path]::GetTempPath()) ('{0}-{1}-logs' -f $name,$testsessionid) )
+                New-Item -ItemType Directory -Path $tempfolder.FullName | Out-Null
+                [System.IO.FileInfo]$tempfile = (Join-Path $tempfolder.FullName 'logs.zip')
+                Save-AzureWebsiteLog -Name $name -Output $tempfile.FullName | Out-Null
+
+                # extract the log files to a temp folder
+                [io.compression.zipfile]::ExtractToDirectory($tempfile.FullName, $tempfolder.FullName) | Out-Null
+
+                [System.IO.DirectoryInfo]$httplogfolder = (Join-Path $tempfolder.FullName 'LogFiles\http\RawLogs')
+                $firstreqpattern = ('{0}.*testsessionid={1}&testrequest=first.*\s200\s\d+\s\d+\s\d+\s\d+\s\d+' -f [regex]::Escape($name.ToUpper()), $testsessionid)
+                $secondreqpattern = ('{0}.*testsessionid={1}&testrequest=second.*\s200\s\d+\s\d+\s\d+\s\d+\s\d+' -f [regex]::Escape($name.ToUpper()), $testsessionid)
+
+                $firstreqresponsetimes = (Get-ChildItem $httplogfolder *.log | Get-Content | Where-Object { $_ -match $firstreqpattern} | % { [int]($_.Substring($_.LastIndexOf(' ')+1)) }  | Measure-Object -Sum -Average)
+                $secondreqresponsetimes = (Get-ChildItem $httplogfolder *.log | Get-Content | Where-Object { $_ -match $secondreqpattern} | % { [int]($_.Substring($_.LastIndexOf(' ')+1)) }  | Measure-Object -Sum -Average)
+
+                '{0}:firstreqresponsetimes: [{1}]' -f $name, ($firstreqresponsetimes | Out-String) | Write-Verbose
+                '{0}:secondreqresponsetimes: [{1}]' -f $name, ($secondreqresponsetimes | Out-String) | Write-Verbose
+
+                if($firstreqresponsetimes -eq $null -or ($secondreqresponsetimes -eq $null)){
+                    'Log results null' | Write-Warning
+                }
+                elseif($firstreqresponsetimes.Count -ne $numIterations -or ($secondreqresponsetimes.Count -ne $numIterations)){
+                    'Expected [{0}] requests but only found [{0}] and [{1}]' -f $firstreqresponsetimes.Count,$secondreqresponsetimes.Count | Write-Warning
+                }
+
+                # return the result
+                New-Object -TypeName psobject -Property @{
+                    Name = $name
+                    AverageFirstRequestResponseTime = $firstreqresponsetimes.Average
+                    AverageSecondRequestResponseTime = $secondreqresponsetimes.Average
+                }
+            }
+            finally{
+                # delete the temp folder
+                if($deletelogfiles -and (Test-Path $tempfolder)){
+                    #Remove-Item $tempfolder.FullName -Recurse | Out-Null
+                }
+            }
+        }
+    }
+}
+
 function Measure-SiteResponseTimesForAll{
     [cmdletbinding()]
     param(
@@ -718,7 +785,7 @@ function Measure-SiteResponseTimesForAll{
         [string]$testsessionid = $script:testsessionid,
 
         [Parameter(Position=2)]
-        [int]$numIterations = 2,
+        [int]$numIterations = $script:numIterations,
 
         [Parameter(Position=3)]
         [int]$maxnumretries = 10
@@ -759,19 +826,26 @@ function Measure-SiteResponseTimesForAll{
                     $result | Write-Verbose
                 }
             }
-
+            # wait 20 sec for iis logs to be written
+            Start-Sleep 20
             # create a summary object for each site
             foreach($sitename in $sitestotest){
                 $avgmillifirst = (($results[$sitename].FirstRequest.ResponseTime|Measure-Object -Sum).Sum)/$numIterations
                 $avgmillisecond = (($results[$sitename].SecondRequest.ResponseTime|Measure-Object -Sum).Sum)/$numIterations
                 $totalattemptsfirstreq = (($results[$sitename].FirstRequest.NumAttempts|Measure-Object -Sum).Sum)
                 $totalattemptssecondreq = (($results[$sitename].SecondRequest.NumAttempts|Measure-Object -Sum).Sum)
+                
+                # download the http log files for the site and get time-spent for this request on first and second request
+
+                $servertimes = Get-ServerResponseTimesFromLog -sitename $sitename -numIterations $numIterations
 
                 # return the object
                 New-Object -TypeName psobject -Property @{
                     Name = $sitename
-                    AverageFirstResponseMilli = $avgmillifirst
-                    AverageSecondResponseMilli = $avgmillisecond
+                    AverageFirstRequestResponseTime = ($servertimes.AverageFirstRequestResponseTime)
+                    AverageSecondRequestResponseTime = ($servertimes.AverageSecondRequestResponseTime)
+                    ClientAverageFirstRequestResponseTime = $avgmillifirst
+                    ClientAverageSecondRequestResponseTime = $avgmillisecond
                     TotalNumAttemptsFirstResponse = $totalattemptsfirstreq
                     TotalNumAttemptsSecondResponse = $totalattemptssecondreq
                     RawResults = ($results[$sitename])
@@ -820,16 +894,16 @@ $sites = @(
     New-SiteObject -name publishtestdnx-beta4-coreclr-nosource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $false
 )
 
-try{
+try{    
     $starttime = Get-Date
-    'Start time: [{0}]' -f ($starttime.ToString('hh:mm:ss tt')) | Write-Verbose
+    'Start time: [{0}]. testsessionid: [{0}]' -f ($starttime.ToString('hh:mm:ss tt')),$testsessionid | Write-Verbose
     Initalize
 
-    $sites | Ensure-SiteExists
+    #$sites | Ensure-SiteExists
     $sites | Populate-AzureWebSiteObjects
 
-    $sites | Delete-RemoteSiteContent
-    $sites | Publish-Site
+    #$sites | Delete-RemoteSiteContent
+    #$sites | Publish-Site
 
     $result = Measure-SiteResponseTimesForAll -sites $sites
 
@@ -839,7 +913,7 @@ try{
     $result
 
     # write out a summary at the end
-    $result | Select-Object Name,AverageFirstResponseMilli,AverageSecondResponseMilli | Format-Table | Out-String | Write-Host -ForegroundColor Green
+    $result | Select-Object Name,AverageFirstRequestResponseTime,AverageSecondRequestResponseTime, ClientAverageFirstRequestResponseTime,ClientAverageSecondRequestResponseTime | Format-Table | Out-String | Write-Host -ForegroundColor Green
 
     $endtime = Get-Date
     'End time: [{0}]. Time spent [{1}] seconds' -f $endtime.ToString('hh:mm:ss tt'),($endtime - $starttime).TotalSeconds | Write-Verbose
