@@ -434,6 +434,8 @@ function Ensure-AzureWebsiteStopped{
         $retries = 0
         $stoppedsite = $false
         while($retries -le $numretries){
+            # sleep to give logs a chance to be written
+            # Start-Sleep -Seconds 2
             if( (Stop-AzureWebsite -Name $name -PassThru) -eq $true){
                 $stoppedsite = $true
                 break;
@@ -670,6 +672,9 @@ function Measure-Request{
         [string]$whichrequest,
 
         [Parameter(Position=4)]
+        [string]$requestId = '',
+
+        [Parameter(Position=5)]
         [int]$numRetries = 10
     )
     process{
@@ -679,8 +684,8 @@ function Measure-Request{
         $statusCodeStr = "(null)"
         [System.Diagnostics.Stopwatch]$stopwatch = $null
 
-        # http://publishtestdnx-beta5-clr-nosource.azurewebsites.net/?testsessionid=12345&testrequest=first
-        [string]$fullurl = ('{0}?testsessionid={1}&testrequest={2}' -f $url,$testsessionid,$whichrequest)
+        # http://publishtestdnx-beta5-clr-nosource.azurewebsites.net/?testsessionid=12345&testrequest=first&requestId=1
+        [string]$fullurl = ('{0}?testsessionid={1}&testrequest={2}&requestId={3}&ticks={4}' -f $url,$testsessionid,$whichrequest,$currentIteration,[datetime]::Now.Ticks)
 
         do{
             if($count -gt 0){
@@ -786,7 +791,7 @@ function Get-ServerResponseTimesFromLog{
                 'Log results null' | Write-Warning
             }
             elseif($firstreqresponsetimes.Count -ne $numIterations -or ($secondreqresponsetimes.Count -ne $numIterations)){
-                'Expected [{0}] requests but only found [{0}] and [{1}]' -f $firstreqresponsetimes.Count,$secondreqresponsetimes.Count | Write-Warning
+                'Expected [{0}] requests but only found [{1}] and [{2}]' -f $numIterations, $firstreqresponsetimes.Count,$secondreqresponsetimes.Count | Write-Warning
             }
 
             # return the result
@@ -795,6 +800,50 @@ function Get-ServerResponseTimesFromLog{
                 AverageFirstRequestResponseTime = $firstreqresponsetimes.Average
                 AverageSecondRequestResponseTime = $secondreqresponsetimes.Average
             }
+        }
+    }
+}
+
+function Get-ServerResponseTimesFromLogRaw{
+    [cmdletbinding()]
+    param(
+        [Parameter(Mandatory=$true,Position=0,ValueFromPipeline=$true)]
+        [string[]]$sitename,
+
+        [Parameter(Position=1)]
+        $testsessionid = $script:testsessionid,
+
+        [Parameter(Position=2)]
+        $numIterations = $script:numIterations,
+
+        [Parameter(Position=3,Mandatory=$true)]
+        [ValidateNotNull()]
+        [System.IO.DirectoryInfo]$logFolder
+
+    )
+    begin{
+        Add-Type -assembly "system.io.compression.filesystem"
+    }
+    process{
+        if(-not (Test-Path $logFolder.FullName)){
+            New-Item -ItemType Directory -Path $logFolder.FullName | Out-Null
+        }
+        foreach($name in $sitename){
+            [System.IO.DirectoryInfo]$sitelogfolder = (Join-Path $logFolder "$name-$testsessionid")
+            if(-not (Test-Path $sitelogfolder)){ New-Item -ItemType Directory -Path $sitelogfolder | Out-Null }
+ 
+            # download the log files
+            [System.IO.FileInfo]$tempfile = (Join-Path $sitelogfolder.FullName 'logs.zip')
+            Save-AzureWebsiteLog -Name $name -Output $tempfile.FullName | Out-Null
+
+            # extract the log files to a temp folder
+            [io.compression.zipfile]::ExtractToDirectory($tempfile.FullName, $sitelogfolder.FullName) | Out-Null
+
+            $pattern = ('{0}.*testsessionid={1}&testrequest.*\s200\s\d+\s\d+\s\d+\s\d+\s\d+' -f [regex]::Escape($name.ToUpper()), $testsessionid)
+
+            [System.IO.DirectoryInfo]$httplogfolder = (Join-Path $sitelogfolder.FullName 'LogFiles\http\RawLogs')
+            # return the raw logs
+            Get-ChildItem $httplogfolder *.log | Get-Content | Where-Object { $_ -match $pattern}
         }
     }
 }
@@ -820,13 +869,15 @@ function Measure-SiteResponseTimesForAll{
 
         $currentIteration = 0
         try{
-            1..$numIterations | % {
+            for($currentIteration = 1; $currentIteration -le $numIterations; $currentIteration++){
                 'Iteration [{0}]' -f $currentIteration | Write-Verbose
-                $currentIteration++
+                # $currentIteration++
                 foreach($site in $sites){
                     # stop the site
                     $siteobj = ($site.AzureSiteObj)
-                    # Start-Sleep 10
+                    
+                    # sleep to ensure logs are written before shut down
+                    #Start-Sleep 10
                     Stop-AzureWebsite -Name ($site.Name)
                     # Start-Sleep 10
                     # start the site
@@ -835,8 +886,8 @@ function Measure-SiteResponseTimesForAll{
                     # Start-Sleep -Seconds 10
 
                     $url = ('http://{0}' -f $siteobj.EnabledHostNames[0])
-                    $measure = Measure-Request -url $url -numRetries $maxnumretries -name $siteobj.Name -testsessionid $script:testsessionid -whichrequest first
-                    $measureSecondReq = Measure-Request -url $url -numRetries $maxnumretries -name $siteobj.Name -testsessionid $script:testsessionid -whichrequest second
+                    $measure = Measure-Request -url $url -numRetries $maxnumretries -name $siteobj.Name -testsessionid $script:testsessionid -whichrequest first -requestId $currentIteration
+                    $measureSecondReq = Measure-Request -url $url -numRetries $maxnumretries -name $siteobj.Name -testsessionid $script:testsessionid -whichrequest second -requestId $currentIteration
 
                     "{0}: {1} milliseconds, second request {2}" -f $url,$measure.ResponseTime,$measureSecondReq.ResponseTime | Write-Verbose
 
@@ -853,6 +904,7 @@ function Measure-SiteResponseTimesForAll{
                     $result | Write-Verbose
                 }
             }
+
             # wait 20 sec for iis logs to be written
             # Start-Sleep 20
             # create a summary object for each site
@@ -863,8 +915,12 @@ function Measure-SiteResponseTimesForAll{
                 $totalattemptssecondreq = (($results[$sitename].SecondRequest.NumAttempts|Measure-Object -Sum).Sum)
                 
                 # download the http log files for the site and get time-spent for this request on first and second request
-
                 $servertimes = Get-ServerResponseTimesFromLog -sitename $sitename -numIterations $numIterations -logFolder $logFolder
+
+                #$rawhttplogs = Get-ServerResponseTimesFromLogRaw -sitename $sitename -numIterations $numIterations -logFolder $logFolder
+
+                #$firstreqpattern = ('{0}.*testsessionid={1}&testrequest=first.*\s200\s\d+\s\d+\s\d+\s\d+\s\d+' -f [regex]::Escape($sitename.ToUpper()), $testsessionid)
+                #$secondreqpattern = ('{0}.*testsessionid={1}&testrequest=second.*\s200\s\d+\s\d+\s\d+\s\d+\s\d+' -f [regex]::Escape($sitename.ToUpper()), $testsessionid)
 
                 # return the object
                 New-Object -TypeName psobject -Property @{
@@ -880,7 +936,7 @@ function Measure-SiteResponseTimesForAll{
             }
         }
         catch{
-            "An unepected error occurred {0}`r`n{1}" -f $_.Exception,(Get-PSCallStack|Out-String)
+            throw ("An unepected error occurred {0}`r`n{1}" -f $_.Exception,(Get-PSCallStack|Out-String))
         }
     }
 }
@@ -894,10 +950,10 @@ function CreateReport{
 
         [Parameter(Position=1,Mandatory=$true)]
         [ValidateNotNull()]
-        [System.IO.FileInfo]$reportpath
+        [System.IO.FileInfo]$reportfilepath
     )
     process{
-        $testresult | ConvertTo-Json -Depth 100 |% {$_.Replace('  ',' ')} | Out-File $reportpath -Force
+        $testresult | ConvertTo-Json -Depth 100 |% {$_.Replace('  ',' ')} | Out-File $reportfilepath.FullName -Force
     }
 }
 
@@ -910,15 +966,15 @@ function CreateReport{
 $sites = @(
     New-SiteObject -name pubtwap -projectpath $samplewapproj -projectType WAP -SolutionRoot ($samplewapproj.Directory.Parent.Parent.FullName)
 
-    New-SiteObject -name pubttdnx-beta5-clr-withsource -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $true -dnxversion 1.0.0-beta5 -dnxfeed 'https://www.myget.org/F/aspnetbeta5/api/v2'
-    New-SiteObject -name pubttdnx-beta5-coreclr-withsource -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $true -dnxversion 1.0.0-beta5 -dnxfeed 'https://www.myget.org/F/aspnetbeta5/api/v2'
-    New-SiteObject -name pubttdnx-beta5-clr-nosource -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false -dnxversion 1.0.0-beta5 -dnxfeed 'https://www.myget.org/F/aspnetbeta5/api/v2'
-    New-SiteObject -name pubttdnx-beta5-coreclr-nosource -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false -dnxversion 1.0.0-beta5 -dnxfeed 'https://www.myget.org/F/aspnetbeta5/api/v2'
+    New-SiteObject -name pubttdnx-beta5-clr-withsource1 -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $true -dnxversion 1.0.0-beta5 -dnxfeed 'https://www.myget.org/F/aspnetbeta5/api/v2'
+    New-SiteObject -name pubttdnx-beta5-coreclr-withsource1 -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $true -dnxversion 1.0.0-beta5 -dnxfeed 'https://www.myget.org/F/aspnetbeta5/api/v2'
+    New-SiteObject -name pubttdnx-beta5-clr-nosource1 -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false -dnxversion 1.0.0-beta5 -dnxfeed 'https://www.myget.org/F/aspnetbeta5/api/v2'
+    New-SiteObject -name pubttdnx-beta5-coreclr-nosource1 -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false -dnxversion 1.0.0-beta5 -dnxfeed 'https://www.myget.org/F/aspnetbeta5/api/v2'
 
-    New-SiteObject -name pubttdnx-beta4-clr-withsource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $true
-    New-SiteObject -name pubttdnx-beta4-coreclr-withsource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $true
-    New-SiteObject -name pubttdnx-beta4-clr-nosource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false
-    New-SiteObject -name pubttdnx-beta4-coreclr-nosource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $false
+    New-SiteObject -name pubttdnx-beta4-clr-withsource1 -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $true
+    New-SiteObject -name pubttdnx-beta4-coreclr-withsource1 -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $true
+    New-SiteObject -name pubttdnx-beta4-clr-nosource1 -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false
+    New-SiteObject -name pubttdnx-beta4-coreclr-nosource1 -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $false
 )
 
 try{    
@@ -930,13 +986,13 @@ try{
     $sites | Ensure-SiteExists
     $sites | Populate-AzureWebSiteObjects
     
-    #$sites | Delete-RemoteSiteContent
-    #$sites | Publish-Site
+    $sites | Delete-RemoteSiteContent
+    $sites | Publish-Site
 
     $result = Measure-SiteResponseTimesForAll -sites $sites
 
     $global:testresult = $result
-
+    CreateReport -testresult $result -reportfilepath $reportfilepath
     # return the result to the caller
     $result
 
