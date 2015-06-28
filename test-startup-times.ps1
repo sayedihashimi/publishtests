@@ -4,13 +4,13 @@ param(
     [string]$testsessionid = [DateTime]::Now.Ticks,
 
     [Parameter(Position=2)]
-    [string]$hostingPlanName = 'teststartuptimeshostingplan',
+    [string]$hostingPlanName = 'teststartuptimeshostingplanstandard2',
 
     [Parameter(Position=3)]
-    [string]$location='East US',
+    [string]$location='North Central US',
 
     [Parameter(Position=4)]
-    [string]$websiteSku = 'Basic',
+    [string]$websiteSku = 'Standard',
 
     [Parameter(Position=5)]
     [string]$azurepsapiversion = '2014-04-01-preview',
@@ -60,7 +60,7 @@ function Add-Path{
         return
     }
     elseif (!(test-path $pathToAdd)){
-        ‘Folder Does not Exist, Cannot be added to $env:path’ | Write-Verbose
+        ‘Folder [{0}] does not exist, Cannot be added to $env:path’ -f $pathToAdd | Write-Verbose
     }
     elseif ($env:path | Select-String -SimpleMatch $pathToAdd){
         Return ‘Folder already within $env:path'
@@ -206,13 +206,13 @@ function Create-Site{
         [object[]]$sitenames,
 
         [Parameter(Position=1)]
-        [string]$hostingPlanName = 'teststartuptimeshostingplan',
+        [string]$hostingPlanName = $script:hostingPlanName,
 
         [Parameter(Position=2)]
-        [string]$location='East US',
+        [string]$location='North Central US',
 
         [Parameter(Position=3)]
-        [string]$websiteSku = 'Basic',
+        [string]$websiteSku = 'Standard',
 
         [Parameter(Position=4)]
         [string]$azurepsapiversion = '2014-04-01-preview'
@@ -227,7 +227,7 @@ function Create-Site{
                 try{
                     'Creating hosting plan named [{0}]' -f $hostingPlanName | Write-Verbose
                     $resourceGroupName = ('Default-Web-{0}' -f $location.Replace(' ',''))
-                    $hostingplanprops=@{'name'= $hostingPlanName;'sku'= $websiteSku;'workerSize'= '0';'numberOfWorkers'= 1}
+                    $hostingplanprops=@{'name'= $hostingPlanName;'sku'= $websiteSku;'workerSize'= '2';'numberOfWorkers'= 1}
                     $hostingplan = New-AzureResource -Name $hostingPlanName -ResourceGroupName $resourceGroupName -ResourceType Microsoft.Web/serverFarms -Location $location -PropertyObject $hostingplanprops -OutputObjectFormat New -ApiVersion $azurepsapiversion -Force
                 }
                 catch{
@@ -254,7 +254,7 @@ function Create-Site{
         foreach($name in $sitenames){
             # configure http logging
             # TODO: How to do this with AzureResoruceManager?
-            Set-AzureWebsite -Name $name -HttpLoggingEnabled $true
+            Set-AzureWebsite -Name $name -HttpLoggingEnabled $true -DetailedErrorLoggingEnabled $true -RequestTracingEnabled $true
         }
     }
 }
@@ -332,7 +332,8 @@ function Publish-DnxSite{
                     Push-Location
                     try{
                         Set-Location $projpath.Directory.FullName
-                        $restoreargs = @('restore','--quiet')
+                        # $restoreargs = @('restore','--quiet')
+                        $restoreargs = @('restore')
                         if(-not [string]::IsNullOrWhiteSpace($siteobj.DnxFeed)){
                             $restoreargs += '-f'
                             $restoreargs += 'https://nuget.org/api/v2/'
@@ -343,7 +344,7 @@ function Publish-DnxSite{
 
                         # call dnu.cmd to publish the site to a folder
                         $dnxstring = ('dnx-{0}-win-{1}.{2}' -f $siteobj.DnxRuntime,$siteobj.DnxBitness,$dnxversion)
-                        $pubargs = ('publish','-o',$tempfolder.FullName,'--configuration','Release','--wwwroot-out','wwwroot','--runtime',$dnxstring,'--quiet')
+                        $pubargs = ('publish','-o',$tempfolder.FullName,'--configuration','Release','--wwwroot-out','wwwroot','--runtime',$dnxstring<#,'--quiet'#>)
                         Invoke-CommandString -command (Join-Path $dnxbin 'dnu.cmd') -commandArgs $pubargs
                         # now publish from that folder to the remote azure site
 
@@ -447,20 +448,21 @@ function Ensure-AzureWebsiteStopped{
     }
 }
 
+
 function Ensure-AzureWebsiteStarted{
     param(
         [Parameter(Mandatory=$true,Position=0)]
         [ValidateNotNullOrEmpty()]
         [string]$name,
 
-        [int]$numretries = 3
+        [int]$numretries = 5
     )
     process{
         'Ensuring site is started [{0}]' -f $name | Write-Verbose        
         $startedsite = $false
         $siteobj = Get-AzureWebsite -Name $name
 
-        if($siteobj.State -ne 'Running'){
+        if([string]::Compare('Running',$siteobj.State,[StringComparison]::OrdinalIgnoreCase) -ne 0){
             $retries = 0
             while($retries -le $numretries){
                 if( (Start-AzureWebsite -Name $name -PassThru) -eq $true){
@@ -472,10 +474,13 @@ function Ensure-AzureWebsiteStarted{
             }        
         }
         else{
+            $startedsite = $true
             'Site [{0}] is already running, not starting' -f $name | Write-Verbose
         }
 
-        if(-not $startedsite){
+        $throwerror = $true
+
+        if(-not $startedsite -and $throwerror){
             throw ('Unable to start site [{0}] after [{1}] retries' -f $name, $numretries)
         }
     }
@@ -493,7 +498,6 @@ function Delete-RemoteSiteContent{
             'Deleting files for site [{0}]' -f $azuresite.Name | Write-Verbose
             # first stop the site
             Ensure-AzureWebsiteStopped -Name ($azuresite.Name)
-            Start-Sleep -Seconds 4
             # delete the files in the remote
 
             # msdeploy.exe -verb:delete -dest:contentPath=sayed03/,ComputerName='https://sayed03.scm.azurewebsites.net/msdeploy.axd',UserName='$sayed03',Password='%pubpwd%',IncludeAcls='False',AuthType='Basic' -whatif
@@ -679,14 +683,15 @@ function Measure-Request{
         [string]$fullurl = ('{0}?testsessionid={1}&testrequest={2}' -f $url,$testsessionid,$whichrequest)
 
         do{
-            try{
-                if($count -gt 0){
-                    Ensure-AzureWebsiteStarted -name $name | Out-Null
-                }
+            if($count -gt 0){
+                Ensure-AzureWebsiteStarted -name $name | Out-Null
+            }
+
+            try{   
                 $count++ | Out-Null
 
                 $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-                $resp = Invoke-WebRequest $fullurl
+                $resp = Invoke-WebRequest $fullurl -TimeoutSec (60*2)
                 $stopwatch.Stop()
                 [System.TimeSpan]$resptime = $stopwatch.Elapsed
             }
@@ -699,8 +704,12 @@ function Measure-Request{
                     $statusCodeStr = $resp.StatusCode
                 }
 
+                $sleeptime = $count + 1
+                if($count -gt 5){
+                    $sleeptime = 45
+                }
                 'Unable to complete web request, status code: [{0}]' -f $statusCodeStr | Write-Verbose
-                Start-Sleep ($count+1)
+                Start-Sleep $sleeptime
             }
         }while(
                 ( ($resp -eq $null) -or ($resp.StatusCode -ne 200)) -and 
@@ -817,13 +826,13 @@ function Measure-SiteResponseTimesForAll{
                 foreach($site in $sites){
                     # stop the site
                     $siteobj = ($site.AzureSiteObj)
-                    Start-Sleep 10
+                    # Start-Sleep 10
                     Stop-AzureWebsite -Name ($site.Name)
-                    Start-Sleep 10
+                    # Start-Sleep 10
                     # start the site
                     Start-AzureWebsite -Name ($site.Name)
                     # give it a second to settle before making a request to avoid 502 errors
-                    Start-Sleep -Seconds 10
+                    # Start-Sleep -Seconds 10
 
                     $url = ('http://{0}' -f $siteobj.EnabledHostNames[0])
                     $measure = Measure-Request -url $url -numRetries $maxnumretries -name $siteobj.Name -testsessionid $script:testsessionid -whichrequest first
@@ -845,7 +854,7 @@ function Measure-SiteResponseTimesForAll{
                 }
             }
             # wait 20 sec for iis logs to be written
-            Start-Sleep 20
+            # Start-Sleep 20
             # create a summary object for each site
             foreach($sitename in $sitestotest){
                 $avgmillifirst = (($results[$sitename].FirstRequest.ResponseTime|Measure-Object -Sum).Sum)/$numIterations
@@ -899,29 +908,30 @@ function CreateReport{
 [System.IO.FileInfo]$samplebeta5xproj = (Join-Path $scriptDir 'samples\src\DnxWebBeta5\DnxWebBeta5.xproj')
 
 $sites = @(
-    New-SiteObject -name publishtestwap -projectpath $samplewapproj -projectType WAP -SolutionRoot ($samplewapproj.Directory.Parent.Parent.FullName)
+    New-SiteObject -name pubtwap -projectpath $samplewapproj -projectType WAP -SolutionRoot ($samplewapproj.Directory.Parent.Parent.FullName)
 
-    New-SiteObject -name publishtestdnx-beta5-clr-withsource -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $true -dnxversion 1.0.0-beta5 -dnxfeed 'https://www.myget.org/F/aspnetbeta5/api/v2'
-    New-SiteObject -name publishtestdnx-beta5-coreclr-withsource -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $true -dnxversion 1.0.0-beta5 -dnxfeed 'https://www.myget.org/F/aspnetbeta5/api/v2'
-    New-SiteObject -name publishtestdnx-beta5-clr-nosource -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false -dnxversion 1.0.0-beta5 -dnxfeed 'https://www.myget.org/F/aspnetbeta5/api/v2'
-    New-SiteObject -name publishtestdnx-beta5-coreclr-nosource -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false -dnxversion 1.0.0-beta5 -dnxfeed 'https://www.myget.org/F/aspnetbeta5/api/v2'
+    New-SiteObject -name pubttdnx-beta5-clr-withsource -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $true -dnxversion 1.0.0-beta5 -dnxfeed 'https://www.myget.org/F/aspnetbeta5/api/v2'
+    New-SiteObject -name pubttdnx-beta5-coreclr-withsource -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $true -dnxversion 1.0.0-beta5 -dnxfeed 'https://www.myget.org/F/aspnetbeta5/api/v2'
+    New-SiteObject -name pubttdnx-beta5-clr-nosource -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false -dnxversion 1.0.0-beta5 -dnxfeed 'https://www.myget.org/F/aspnetbeta5/api/v2'
+    New-SiteObject -name pubttdnx-beta5-coreclr-nosource -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false -dnxversion 1.0.0-beta5 -dnxfeed 'https://www.myget.org/F/aspnetbeta5/api/v2'
 
-    New-SiteObject -name publishtestdnx-beta4-clr-withsource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $true
-    New-SiteObject -name publishtestdnx-beta4-coreclr-withsource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $true
-    New-SiteObject -name publishtestdnx-beta4-clr-nosource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false
-    New-SiteObject -name publishtestdnx-beta4-coreclr-nosource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $false
+    New-SiteObject -name pubttdnx-beta4-clr-withsource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $true
+    New-SiteObject -name pubttdnx-beta4-coreclr-withsource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $true
+    New-SiteObject -name pubttdnx-beta4-clr-nosource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false
+    New-SiteObject -name pubttdnx-beta4-coreclr-nosource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $false
 )
 
 try{    
     $starttime = Get-Date
     'Start time: [{0}]. testsessionid: [{0}]' -f ($starttime.ToString('hh:mm:ss tt')),$testsessionid | Write-Verbose
+ 
     Initalize
 
     $sites | Ensure-SiteExists
     $sites | Populate-AzureWebSiteObjects
-
-    $sites | Delete-RemoteSiteContent
-    $sites | Publish-Site
+    
+    #$sites | Delete-RemoteSiteContent
+    #$sites | Publish-Site
 
     $result = Measure-SiteResponseTimesForAll -sites $sites
 
