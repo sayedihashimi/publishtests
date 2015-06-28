@@ -1,8 +1,5 @@
 ﻿[cmdletbinding()]
 param(
-    [Parameter(Position=0)]
-    [System.IO.FileInfo]$reportfilepath,
-
     [Parameter(Position=1)]
     [string]$testsessionid = [DateTime]::Now.Ticks,
 
@@ -21,8 +18,11 @@ param(
     [Parameter(Position=6)]
     $numIterations = 25,
 
-    [Parameter(Position=6)]
-    [bool]$deletelogfiles = $false
+    [Parameter(Position=7)]
+    [System.IO.DirectoryInfo]$logFolder,
+
+    [Parameter(Position=8)]
+    [System.IO.FileInfo]$reportfilepath
 )
 
 Set-StrictMode -Version Latest
@@ -32,8 +32,12 @@ function InternalGet-ScriptDirectory{
 }
 $scriptDir = ((InternalGet-ScriptDirectory) + "\")
 
+if($logFolder -eq $null){
+    $logFolder = (Join-Path $scriptDir "logs\$testsessionid")
+}
+
 if($reportfilepath -eq $null){
-    $reportfilepath = (Join-Path $scriptDir 'startuptimes.json')
+    $reportfilepath = (Join-Path $logFolder 'startuptimes.json')
 }
 
 [System.IO.FileInfo]$dnvmpath = (Join-Path $env:USERPROFILE '.dnx\bin\dnvm.cmd')
@@ -452,16 +456,23 @@ function Ensure-AzureWebsiteStarted{
         [int]$numretries = 3
     )
     process{
-        'Starting site [{0}]' -f $name | Write-Verbose
-        $retries = 0
+        'Ensuring site is started [{0}]' -f $name | Write-Verbose        
         $startedsite = $false
-        while($retries -le $numretries){
-            if( (Start-AzureWebsite -Name $name -PassThru) -eq $true){
-                $startedsite = $true
-                break;   
-            }
-            Start-Sleep -Seconds 1
-            $retries++
+        $siteobj = Get-AzureWebsite -Name $name
+
+        if($siteobj.State -ne 'Running'){
+            $retries = 0
+            while($retries -le $numretries){
+                if( (Start-AzureWebsite -Name $name -PassThru) -eq $true){
+                    $startedsite = $true
+                    break;   
+                }
+                Start-Sleep -Seconds 1
+                $retries++
+            }        
+        }
+        else{
+            'Site [{0}] is already running, not starting' -f $name | Write-Verbose
         }
 
         if(-not $startedsite){
@@ -669,6 +680,11 @@ function Measure-Request{
 
         do{
             try{
+                if($count -gt 0){
+                    Ensure-AzureWebsiteStarted -name $name | Out-Null
+                }
+                $count++ | Out-Null
+
                 $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
                 $resp = Invoke-WebRequest $fullurl
                 $stopwatch.Stop()
@@ -676,7 +692,7 @@ function Measure-Request{
             }
             catch{
                 # ignore and try again
-                Write-Verbose $_
+                Write-Verbose $_.Exception
             }
             if(-not $? -or ($resp -eq $null) -or ($resp.StatusCode -ne 200)){
                 if($resp -ne $null){
@@ -684,20 +700,18 @@ function Measure-Request{
                 }
 
                 'Unable to complete web request, status code: [{0}]' -f $statusCodeStr | Write-Verbose
-                Stop-AzureWebsite -Name $name
-                Start-AzureWebsite -Name $name
                 Start-Sleep ($count+1)
             }
         }while(
                 ( ($resp -eq $null) -or ($resp.StatusCode -ne 200)) -and 
-                ($count++ -le $numRetries))
+                ($count -le $numRetries))
 
         if( ($resp -eq $null) -or ($resp.StatusCode -ne 200)){
             
             if($resp -ne $null){
                 $statusCodeStr = $resp.StatusCode
             }
-            throw ("`r`nReceived an unexpected http status code [{0}] for url [{1}]`r`nIterations:{2}`r`nTotals:{3}`r`nSecond Request:{4}" -f $statusCodeStr,$fullurl,$currentIteration,($totalMilli|Out-String),($totalMilliSecondReq|Out-String))
+            throw ("`r`nReceived an unexpected http status code [{0}] for url [{1}]`r`nIterations:{2}`r`n" -f $statusCodeStr, $fullurl, $currentIteration)
         }
 
         # create an object with all the data and return it
@@ -724,52 +738,53 @@ function Get-ServerResponseTimesFromLog{
         $testsessionid = $script:testsessionid,
 
         [Parameter(Position=2)]
-        $numIterations = $script:numIterations
+        $numIterations = $script:numIterations,
+
+        [Parameter(Position=3,Mandatory=$true)]
+        [ValidateNotNull()]
+        [System.IO.DirectoryInfo]$logFolder
+
     )
     begin{
         Add-Type -assembly "system.io.compression.filesystem"
     }
     process{
+        if(-not (Test-Path $logFolder.FullName)){
+            New-Item -ItemType Directory -Path $logFolder.FullName | Out-Null
+        }
         foreach($name in $sitename){
-            try{
-                # download the log files to a temp folder            
-                [System.IO.FileInfo]$tempfolder = (Join-Path ([System.IO.Path]::GetTempPath()) ('{0}-{1}-logs' -f $name,$testsessionid) )
-                New-Item -ItemType Directory -Path $tempfolder.FullName | Out-Null
-                [System.IO.FileInfo]$tempfile = (Join-Path $tempfolder.FullName 'logs.zip')
-                Save-AzureWebsiteLog -Name $name -Output $tempfile.FullName | Out-Null
+            [System.IO.DirectoryInfo]$sitelogfolder = (Join-Path $logFolder "$name-$testsessionid")
+            if(-not (Test-Path $sitelogfolder)){ New-Item -ItemType Directory -Path $sitelogfolder | Out-Null }
+ 
+            # download the log files
+            [System.IO.FileInfo]$tempfile = (Join-Path $sitelogfolder.FullName 'logs.zip')
+            Save-AzureWebsiteLog -Name $name -Output $tempfile.FullName | Out-Null
 
-                # extract the log files to a temp folder
-                [io.compression.zipfile]::ExtractToDirectory($tempfile.FullName, $tempfolder.FullName) | Out-Null
+            # extract the log files to a temp folder
+            [io.compression.zipfile]::ExtractToDirectory($tempfile.FullName, $sitelogfolder.FullName) | Out-Null
 
-                [System.IO.DirectoryInfo]$httplogfolder = (Join-Path $tempfolder.FullName 'LogFiles\http\RawLogs')
-                $firstreqpattern = ('{0}.*testsessionid={1}&testrequest=first.*\s200\s\d+\s\d+\s\d+\s\d+\s\d+' -f [regex]::Escape($name.ToUpper()), $testsessionid)
-                $secondreqpattern = ('{0}.*testsessionid={1}&testrequest=second.*\s200\s\d+\s\d+\s\d+\s\d+\s\d+' -f [regex]::Escape($name.ToUpper()), $testsessionid)
+            [System.IO.DirectoryInfo]$httplogfolder = (Join-Path $sitelogfolder.FullName 'LogFiles\http\RawLogs')
+            $firstreqpattern = ('{0}.*testsessionid={1}&testrequest=first.*\s200\s\d+\s\d+\s\d+\s\d+\s\d+' -f [regex]::Escape($name.ToUpper()), $testsessionid)
+            $secondreqpattern = ('{0}.*testsessionid={1}&testrequest=second.*\s200\s\d+\s\d+\s\d+\s\d+\s\d+' -f [regex]::Escape($name.ToUpper()), $testsessionid)
 
-                $firstreqresponsetimes = (Get-ChildItem $httplogfolder *.log | Get-Content | Where-Object { $_ -match $firstreqpattern} | % { [int]($_.Substring($_.LastIndexOf(' ')+1)) }  | Measure-Object -Sum -Average)
-                $secondreqresponsetimes = (Get-ChildItem $httplogfolder *.log | Get-Content | Where-Object { $_ -match $secondreqpattern} | % { [int]($_.Substring($_.LastIndexOf(' ')+1)) }  | Measure-Object -Sum -Average)
+            $firstreqresponsetimes = (Get-ChildItem $httplogfolder *.log | Get-Content | Where-Object { $_ -match $firstreqpattern} | % { [int]($_.Substring($_.LastIndexOf(' ')+1)) }  | Measure-Object -Sum -Average)
+            $secondreqresponsetimes = (Get-ChildItem $httplogfolder *.log | Get-Content | Where-Object { $_ -match $secondreqpattern} | % { [int]($_.Substring($_.LastIndexOf(' ')+1)) }  | Measure-Object -Sum -Average)
 
-                '{0}:firstreqresponsetimes: [{1}]' -f $name, ($firstreqresponsetimes | Out-String) | Write-Verbose
-                '{0}:secondreqresponsetimes: [{1}]' -f $name, ($secondreqresponsetimes | Out-String) | Write-Verbose
+            '{0}:firstreqresponsetimes: [{1}]' -f $name, ($firstreqresponsetimes | Out-String) | Write-Verbose
+            '{0}:secondreqresponsetimes: [{1}]' -f $name, ($secondreqresponsetimes | Out-String) | Write-Verbose
 
-                if($firstreqresponsetimes -eq $null -or ($secondreqresponsetimes -eq $null)){
-                    'Log results null' | Write-Warning
-                }
-                elseif($firstreqresponsetimes.Count -ne $numIterations -or ($secondreqresponsetimes.Count -ne $numIterations)){
-                    'Expected [{0}] requests but only found [{0}] and [{1}]' -f $firstreqresponsetimes.Count,$secondreqresponsetimes.Count | Write-Warning
-                }
-
-                # return the result
-                New-Object -TypeName psobject -Property @{
-                    Name = $name
-                    AverageFirstRequestResponseTime = $firstreqresponsetimes.Average
-                    AverageSecondRequestResponseTime = $secondreqresponsetimes.Average
-                }
+            if($firstreqresponsetimes -eq $null -or ($secondreqresponsetimes -eq $null)){
+                'Log results null' | Write-Warning
             }
-            finally{
-                # delete the temp folder
-                if($deletelogfiles -and (Test-Path $tempfolder)){
-                    #Remove-Item $tempfolder.FullName -Recurse | Out-Null
-                }
+            elseif($firstreqresponsetimes.Count -ne $numIterations -or ($secondreqresponsetimes.Count -ne $numIterations)){
+                'Expected [{0}] requests but only found [{0}] and [{1}]' -f $firstreqresponsetimes.Count,$secondreqresponsetimes.Count | Write-Warning
+            }
+
+            # return the result
+            New-Object -TypeName psobject -Property @{
+                Name = $name
+                AverageFirstRequestResponseTime = $firstreqresponsetimes.Average
+                AverageSecondRequestResponseTime = $secondreqresponsetimes.Average
             }
         }
     }
@@ -797,15 +812,18 @@ function Measure-SiteResponseTimesForAll{
         $currentIteration = 0
         try{
             1..$numIterations | % {
+                'Iteration [{0}]' -f $currentIteration | Write-Verbose
                 $currentIteration++
                 foreach($site in $sites){
                     # stop the site
                     $siteobj = ($site.AzureSiteObj)
+                    Start-Sleep 10
                     Stop-AzureWebsite -Name ($site.Name)
+                    Start-Sleep 10
                     # start the site
                     Start-AzureWebsite -Name ($site.Name)
                     # give it a second to settle before making a request to avoid 502 errors
-                    Start-Sleep -Seconds 2
+                    Start-Sleep -Seconds 10
 
                     $url = ('http://{0}' -f $siteobj.EnabledHostNames[0])
                     $measure = Measure-Request -url $url -numRetries $maxnumretries -name $siteobj.Name -testsessionid $script:testsessionid -whichrequest first
@@ -837,7 +855,7 @@ function Measure-SiteResponseTimesForAll{
                 
                 # download the http log files for the site and get time-spent for this request on first and second request
 
-                $servertimes = Get-ServerResponseTimesFromLog -sitename $sitename -numIterations $numIterations
+                $servertimes = Get-ServerResponseTimesFromLog -sitename $sitename -numIterations $numIterations -logFolder $logFolder
 
                 # return the object
                 New-Object -TypeName psobject -Property @{
@@ -899,11 +917,11 @@ try{
     'Start time: [{0}]. testsessionid: [{0}]' -f ($starttime.ToString('hh:mm:ss tt')),$testsessionid | Write-Verbose
     Initalize
 
-    #$sites | Ensure-SiteExists
+    $sites | Ensure-SiteExists
     $sites | Populate-AzureWebSiteObjects
 
-    #$sites | Delete-RemoteSiteContent
-    #$sites | Publish-Site
+    $sites | Delete-RemoteSiteContent
+    $sites | Publish-Site
 
     $result = Measure-SiteResponseTimesForAll -sites $sites
 
