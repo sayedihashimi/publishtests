@@ -738,6 +738,9 @@ function Measure-Request{
             }
             ResponseTime = $stopwatch.Elapsed.TotalMilliseconds
             NumAttempts = ($count+1)
+            Iteration=$requestId
+            ServerResponseTime = $null
+            ServerLogString = $null
         }
     }
 }
@@ -830,20 +833,29 @@ function Get-ServerResponseTimesFromLogRaw{
         }
         foreach($name in $sitename){
             [System.IO.DirectoryInfo]$sitelogfolder = (Join-Path $logFolder "$name-$testsessionid")
-            if(-not (Test-Path $sitelogfolder)){ New-Item -ItemType Directory -Path $sitelogfolder | Out-Null }
- 
             # download the log files
             [System.IO.FileInfo]$tempfile = (Join-Path $sitelogfolder.FullName 'logs.zip')
-            Save-AzureWebsiteLog -Name $name -Output $tempfile.FullName | Out-Null
-
-            # extract the log files to a temp folder
-            [io.compression.zipfile]::ExtractToDirectory($tempfile.FullName, $sitelogfolder.FullName) | Out-Null
-
-            $pattern = ('{0}.*testsessionid={1}&testrequest.*\s200\s\d+\s\d+\s\d+\s\d+\s\d+' -f [regex]::Escape($name.ToUpper()), $testsessionid)
+            
+            if(-not (Test-Path $tempfile)){
+                if(-not (Test-Path $sitelogfolder)){ New-Item -ItemType Directory -Path $sitelogfolder | Out-Null }
+                Save-AzureWebsiteLog -Name $name -Output $tempfile.FullName | Out-Null
+                # extract the log files to a temp folder
+                [io.compression.zipfile]::ExtractToDirectory($tempfile.FullName, $sitelogfolder.FullName) | Out-Null
+            }
 
             [System.IO.DirectoryInfo]$httplogfolder = (Join-Path $sitelogfolder.FullName 'LogFiles\http\RawLogs')
-            # return the raw logs
-            Get-ChildItem $httplogfolder *.log | Get-Content | Where-Object { $_ -match $pattern}
+            $pattern = ('(?<logstr>{0}.*testsessionid={1}&testrequest=(?<whichrequest>.[^&]*)&requestId=(?<iteration>\d+).*\s200\s\d+\s\d+\s\d+\s\d+\s(?<time>\d+))' -f [regex]::Escape($sitename.ToUpper()), $testsessionid)
+
+            Get-ChildItem $httplogfolder *.log | Get-Content | % {
+                if($_ -match $pattern){
+                    New-Object -TypeName psobject -Property @{
+                        Iteration = $Matches['iteration']
+                        WhichRequest = $Matches['whichrequest']
+                        TimeSpent = $Matches['time']
+                        ServerLogString = $Matches['logstr']
+                    }
+                }
+            }
         }
     }
 }
@@ -915,7 +927,33 @@ function Measure-SiteResponseTimesForAll{
                 $totalattemptssecondreq = (($results[$sitename].SecondRequest.NumAttempts|Measure-Object -Sum).Sum)
                 
                 # download the http log files for the site and get time-spent for this request on first and second request
-                $servertimes = Get-ServerResponseTimesFromLog -sitename $sitename -numIterations $numIterations -logFolder $logFolder
+                #$servertimes = Get-ServerResponseTimesFromLog -sitename $sitename -numIterations $numIterations -logFolder $logFolder
+                $serverresptimes = Get-ServerResponseTimesFromLogRaw -sitename $sitename -numIterations $numIterations -logFolder $logFolder
+
+                foreach($serverresp in $serverresptimes){
+                    try{
+                        switch($serverresp.WhichRequest){
+                            'first' {
+                                $results[$sitename][$serverresp.Iteration-1].FirstRequest.ServerResponseTime = $serverresp.TimeSpent
+                                $results[$sitename][$serverresp.Iteration-1].FirstRequest.ServerLogString = $serverresp.ServerLogString
+                            }
+                            'second' {
+                                $results[$sitename][$serverresp.Iteration-1].SecondRequest.ServerResponseTime = $serverresp.TimeSpent
+                                $results[$sitename][$serverresp.Iteration-1].FirstRequest.ServerLogString = $serverresp.ServerLogString
+                            }
+                        }
+                    }
+                    catch{
+                        $msg = $_.Exception
+                    }                 
+                }
+
+                <#
+                    Iteration = $Matches['iteration']
+                    WhichRequest = $Matches['whichrequest']
+                    TimeSpent = $Matches['time']
+                #>
+
 
                 #$rawhttplogs = Get-ServerResponseTimesFromLogRaw -sitename $sitename -numIterations $numIterations -logFolder $logFolder
 
@@ -925,8 +963,10 @@ function Measure-SiteResponseTimesForAll{
                 # return the object
                 New-Object -TypeName psobject -Property @{
                     Name = $sitename
-                    AverageFirstRequestResponseTime = ($servertimes.AverageFirstRequestResponseTime)
-                    AverageSecondRequestResponseTime = ($servertimes.AverageSecondRequestResponseTime)
+                    #AverageFirstRequestResponseTime = ($servertimes.AverageFirstRequestResponseTime)
+                    #AverageSecondRequestResponseTime = ($servertimes.AverageSecondRequestResponseTime)
+                    AverageFirstRequestResponseTime = (($results[$sitename].FirstRequest.ServerResponseTime|Where-Object {$_ -ne $null}|Measure-Object -Average).Average)
+                    AverageSecondRequestResponseTime = (($results[$sitename].SecondRequest.ServerResponseTime|Where-Object {$_ -ne $null}|Measure-Object -Average).Average)
                     ClientAverageFirstRequestResponseTime = $avgmillifirst
                     ClientAverageSecondRequestResponseTime = $avgmillisecond
                     TotalNumAttemptsFirstResponse = $totalattemptsfirstreq
@@ -964,17 +1004,17 @@ function CreateReport{
 [System.IO.FileInfo]$samplebeta5xproj = (Join-Path $scriptDir 'samples\src\DnxWebBeta5\DnxWebBeta5.xproj')
 
 $sites = @(
-    New-SiteObject -name pubtwap -projectpath $samplewapproj -projectType WAP -SolutionRoot ($samplewapproj.Directory.Parent.Parent.FullName)
+    New-SiteObject -name pubtwap2 -projectpath $samplewapproj -projectType WAP -SolutionRoot ($samplewapproj.Directory.Parent.Parent.FullName)
 
-    New-SiteObject -name pubttdnx-beta5-clr-withsource1 -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $true -dnxversion 1.0.0-beta5 -dnxfeed 'https://www.myget.org/F/aspnetbeta5/api/v2'
-    New-SiteObject -name pubttdnx-beta5-coreclr-withsource1 -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $true -dnxversion 1.0.0-beta5 -dnxfeed 'https://www.myget.org/F/aspnetbeta5/api/v2'
-    New-SiteObject -name pubttdnx-beta5-clr-nosource1 -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false -dnxversion 1.0.0-beta5 -dnxfeed 'https://www.myget.org/F/aspnetbeta5/api/v2'
-    New-SiteObject -name pubttdnx-beta5-coreclr-nosource1 -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false -dnxversion 1.0.0-beta5 -dnxfeed 'https://www.myget.org/F/aspnetbeta5/api/v2'
+    New-SiteObject -name pubttdnx-beta5-clr-withsource2 -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $true -dnxversion 1.0.0-beta5 -dnxfeed 'https://www.myget.org/F/aspnetbeta5/api/v2'
+    New-SiteObject -name pubttdnx-beta5-coreclr-withsource2 -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $true -dnxversion 1.0.0-beta5 -dnxfeed 'https://www.myget.org/F/aspnetbeta5/api/v2'
+    New-SiteObject -name pubttdnx-beta5-clr-nosource2 -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false -dnxversion 1.0.0-beta5 -dnxfeed 'https://www.myget.org/F/aspnetbeta5/api/v2'
+    New-SiteObject -name pubttdnx-beta5-coreclr-nosource2 -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false -dnxversion 1.0.0-beta5 -dnxfeed 'https://www.myget.org/F/aspnetbeta5/api/v2'
 
-    New-SiteObject -name pubttdnx-beta4-clr-withsource1 -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $true
-    New-SiteObject -name pubttdnx-beta4-coreclr-withsource1 -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $true
-    New-SiteObject -name pubttdnx-beta4-clr-nosource1 -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false
-    New-SiteObject -name pubttdnx-beta4-coreclr-nosource1 -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $false
+    New-SiteObject -name pubttdnx-beta4-clr-withsource2 -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $true
+    New-SiteObject -name pubttdnx-beta4-coreclr-withsource2 -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $true
+    New-SiteObject -name pubttdnx-beta4-clr-nosource2 -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false
+    New-SiteObject -name pubttdnx-beta4-coreclr-nosource2 -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $false
 )
 
 try{    
@@ -990,7 +1030,7 @@ try{
     $sites | Publish-Site
 
     $result = Measure-SiteResponseTimesForAll -sites $sites
-
+    
     $global:testresult = $result
     CreateReport -testresult $result -reportfilepath $reportfilepath
     # return the result to the caller
