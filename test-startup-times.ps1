@@ -1,28 +1,39 @@
-﻿[cmdletbinding()]
+﻿[cmdletbinding(DefaultParameterSetName='default')]
 param(
-    [Parameter(Position=1)]
+    [Parameter(ParameterSetName='default',Position=1)]
     [string]$testsessionid = [DateTime]::Now.Ticks,
 
-    [Parameter(Position=2)]
-    [string]$hostingPlanName = 'teststartuptimeshostingplanstandard2',
+    [Parameter(ParameterSetName='default',Position=2)]
+    [string]$hostingPlanName = 'testhostingplanstandard',
 
-    [Parameter(Position=3)]
+    [Parameter(ParameterSetName='default',Position=3)]
     [string]$location='North Central US',
 
-    [Parameter(Position=4)]
+    [Parameter(ParameterSetName='default',Position=4)]
     [string]$websiteSku = 'Standard',
 
-    [Parameter(Position=5)]
+    [Parameter(ParameterSetName='default',Position=5)]
     [string]$azurepsapiversion = '2014-04-01-preview',
 
-    [Parameter(Position=6)]
+    [Parameter(ParameterSetName='default',Position=6)]
     $numIterations = 25,
 
-    [Parameter(Position=7)]
+    [Parameter(ParameterSetName='default',Position=7)]
     [System.IO.DirectoryInfo]$logFolder,
 
-    [Parameter(Position=8)]
-    [System.IO.FileInfo]$reportfilepath
+    [Parameter(ParameterSetName='default',Position=8)]
+    [System.IO.FileInfo]$reportfilepath,
+
+    [Parameter(ParameterSetName='default',Position=9)]
+    [switch]$skipPublish,
+
+    # stop parameters
+    [Parameter(ParameterSetName='stop',Position=1)]
+    [switch]$stopSites,
+
+    # delete parameters
+    [Parameter(ParameterSetName='delete',Position=1)]
+    [switch]$deleteSites
 )
 
 Set-StrictMode -Version Latest
@@ -41,7 +52,6 @@ if($reportfilepath -eq $null){
 }
 
 [System.IO.FileInfo]$dnvmpath = (Join-Path $env:USERPROFILE '.dnx\bin\dnvm.cmd')
-$dnxversion = '1.0.0-beta4'
 $originalpath = $env:Path
 
 # http://blogs.technet.com/b/heyscriptingguy/archive/2011/07/23/use-powershell-to-modify-your-environmental-path.aspx
@@ -57,20 +67,19 @@ function Add-Path{
     $oldpath=$env:path
     if (!$pathToAdd){
         ‘No Folder Supplied. $env:path Unchanged’ | Write-Verbose
-        return
     }
     elseif (!(test-path $pathToAdd)){
         ‘Folder [{0}] does not exist, Cannot be added to $env:path’ -f $pathToAdd | Write-Verbose
     }
     elseif ($env:path | Select-String -SimpleMatch $pathToAdd){
-        Return ‘Folder already within $env:path'
+        Return ‘Folder already within $env:path' | Write-Verbose
     }
     else{
         'Adding [{0}] to the path' -f $pathToAdd | Write-Verbose
         $newpath = $oldpath
         # set the new path
         foreach($path in $pathToAdd){
-            $newPath=$newPath+’;’+$path
+            $newPath += ";$path"
         }
 
         $env:path = $newPath
@@ -117,7 +126,7 @@ function New-SiteObject{
         [string]$projectType = 'DNX',
 
         [Parameter(Position=3)]
-        [string]$dnxversion = $script:dnxversion,
+        [string]$dnxversion='',
 
         [Parameter(Position=4)]
         [ValidateSet('x86','x64')]
@@ -131,10 +140,10 @@ function New-SiteObject{
         [bool]$dnxpublishsource = $true,
 
         [Parameter(Position=7)]
-        [string]$dnxfeed,
+        [string]$dnxfeed = '',
 
         [Parameter(Position=8)]
-        [System.IO.DirectoryInfo]$SolutionRoot
+        [System.IO.DirectoryInfo]$solutionRoot
     )
     process{
         $siteobj = New-Object -TypeName psobject -Property @{
@@ -147,7 +156,7 @@ function New-SiteObject{
             DnxRuntime = $null
             DnxFeed = $dnxfeed
             # only needed for WAP project so that nuget restore can be called
-            SolutionRoot = $SolutionRoot
+            SolutionRoot = $solutionRoot
 
             # will be populated when the script is started
             AzureSiteObj = $null
@@ -215,19 +224,22 @@ function Create-Site{
         [string]$websiteSku = 'Standard',
 
         [Parameter(Position=4)]
+        [int]$workerSize = 2,
+
+        [Parameter(Position=5)]
         [string]$azurepsapiversion = '2014-04-01-preview'
     )
     process{
         $hostingplan = $null
         # make sure that the hosting plan exists, if not create it
         try{
-            Switch-AzureMode AzureResourceManager
+            Switch-AzureMode AzureResourceManager | Out-Null
             $hostingplan = Get-AzureResource -ResourceName $hostingPlanName -OutputObjectFormat New -ApiVersion $azurepsapiversion
             if(-not $hostingplan){
                 try{
                     'Creating hosting plan named [{0}]' -f $hostingPlanName | Write-Verbose
                     $resourceGroupName = ('Default-Web-{0}' -f $location.Replace(' ',''))
-                    $hostingplanprops=@{'name'= $hostingPlanName;'sku'= $websiteSku;'workerSize'= '2';'numberOfWorkers'= 1}
+                    $hostingplanprops=@{'name'= $hostingPlanName;'sku'= $websiteSku;'workerSize'= $workerSize;'numberOfWorkers'= 1}
                     $hostingplan = New-AzureResource -Name $hostingPlanName -ResourceGroupName $resourceGroupName -ResourceType Microsoft.Web/serverFarms -Location $location -PropertyObject $hostingplanprops -OutputObjectFormat New -ApiVersion $azurepsapiversion -Force
                 }
                 catch{
@@ -239,7 +251,6 @@ function Create-Site{
             foreach($name in $sitenames){
                 try{
                     'Creating new website [{0}]' -f $name  | Write-Verbose
-                    # New-AzureResource -name $name -ResourceType 'Microsoft.Web/sites' -ResourceGroupName $resourceGroupName -Location $location  -PropertyObject @{'serverFarmId'=$hostingplan.ResourceId} -ApiVersion $azurepsapiversion
                     New-AzureResource -name $name -ResourceType 'Microsoft.Web/sites' -ResourceGroupName $resourceGroupName -Location $location  -PropertyObject @{'serverFarm'=$hostingplan.ResourceName} -OutputObjectFormat New -ApiVersion $azurepsapiversion -Force
                 }
                 catch{
@@ -248,13 +259,13 @@ function Create-Site{
             }
         }
         finally{
-            Switch-AzureMode AzureServiceManagement
+            Switch-AzureMode AzureServiceManagement | Out-Null
         }
 
         foreach($name in $sitenames){
-            # configure http logging
-            # TODO: How to do this with AzureResoruceManager?
-            Set-AzureWebsite -Name $name -HttpLoggingEnabled $true -DetailedErrorLoggingEnabled $true -RequestTracingEnabled $true
+            # TODO: How to do this with AzureResoruceManager when the site is created?
+            'Configuring settings on site [{0}]' -f $name | Write-Verbose
+            Set-AzureWebsite -Name $name -HttpLoggingEnabled $true -DetailedErrorLoggingEnabled $true -RequestTracingEnabled $true | Out-Null
         }
     }
 }
@@ -269,11 +280,9 @@ function Publish-Site{
         # figure out if its dnx or a standard wap
         foreach($siteobj in $site){
             'Preparing to publish [{0}]' -f $siteobj.Name | Write-Verbose
-            if($siteobj.ProjectType -eq 'DNX'){
-                Publish-DnxSite -site $siteobj
-            }
-            elseif($siteobj.ProjectType -eq 'WAP'){
-                Publish-WapSite -site $siteobj
+            switch($siteobj.ProjectType){
+                'DNX' {Publish-DnxSite -site $siteobj}
+                'WAP' {Publish-WapSite -site $siteobj}
             }
         }
     }
@@ -314,7 +323,7 @@ function Publish-DnxSite{
                     Invoke-CommandString -command ($dnvmpath.FullName) -commandArgs $cmdargs
 
                     # add dnx bin to the path C:\Users\sayedha\.dnx\runtimes\dnx-clr-win-x64.1.0.0-beta4\bin
-                    $dnxbin = (Join-Path $env:USERPROFILE ('.dnx\runtimes\dnx-{0}-win-{1}.{2}\bin' -f $siteobj.DnxRuntime,$siteobj.DnxBitness,$dnxversion))
+                    $dnxbin = (Join-Path $env:USERPROFILE ('.dnx\runtimes\dnx-{0}-win-{1}.{2}\bin' -f $siteobj.DnxRuntime,$siteobj.DnxBitness,$siteobj.DnxVersion))
                     if(-not (Test-Path $dnxbin)){
                         throw ('dnx bin not found at [{0}]' -f $dnxbin)
                     }
@@ -324,39 +333,49 @@ function Publish-DnxSite{
                     # call publish to a temp folder
                     [System.IO.FileInfo]$tempfolder = (Join-Path ([System.IO.Path]::GetTempPath()) ('{0}' -f $siteobj.Name) )
                     if(Test-Path $tempfolder){
-                        Remove-Item $tempfolder -Recurse
+                        Remove-Item $tempfolder -Recurse -Force
                     }
 
                     New-Item -ItemType Directory -Path $tempfolder | Out-Null
 
-                    Push-Location
+                    Push-Location |  Out-Null
                     try{
-                        Set-Location $projpath.Directory.FullName
-                        # $restoreargs = @('restore','--quiet')
-                        $restoreargs = @('restore')
+                        Set-Location $projpath.Directory.FullName | Out-Null
+                        # C:\Users\sayedha\.dnx\runtimes\dnx-clr-win-x86.1.0.0-beta5\bin\dnx.exe "C:\Users\sayedha\.dnx\runtimes\dnx-clr-win-x86.1.0.0-beta5\bin\lib\Microsoft.Framework.PackageManager\Microsoft.Framework.PackageManager.dll" restore "<proj-path>"
+                        $dnxexe = (Join-Path $dnxbin 'dnx.exe')
+                        [System.IO.FileInfo]$pkgmgrdll = (Join-Path $dnxbin 'lib\Microsoft.Framework.PackageManager\Microsoft.Framework.PackageManager.dll')
+
+                        $restoreargs = @($pkgmgrdll.FullName,'restore',$projpath.Directory.FullName,'-f','"C:\Program Files (x86)\Microsoft Web Tools\DNU"')
+
+                        #$restoreargs = @('restore','--quiet')
                         if(-not [string]::IsNullOrWhiteSpace($siteobj.DnxFeed)){
                             $restoreargs += '-f'
                             $restoreargs += 'https://nuget.org/api/v2/'
                         }
 
-                        # & dnu restore $restoreargs
-                        Invoke-CommandString -command (join-path $dnxbin 'dnu.cmd') -commandArgs $restoreargs
+                        Invoke-CommandString -command $dnxexe -commandArgs $restoreargs
+                        # Invoke-CommandString -command (join-path $dnxbin 'dnu.cmd') -commandArgs $restoreargs
 
                         # call dnu.cmd to publish the site to a folder
-                        $dnxstring = ('dnx-{0}-win-{1}.{2}' -f $siteobj.DnxRuntime,$siteobj.DnxBitness,$dnxversion)
-                        $pubargs = ('publish','-o',$tempfolder.FullName,'--configuration','Release','--wwwroot-out','wwwroot','--runtime',$dnxstring<#,'--quiet'#>)
+                        $dnxstring = ('dnx-{0}-win-{1}.{2}' -f $siteobj.DnxRuntime,$siteobj.DnxBitness,$siteobj.DnxVersion)
+                        #$pubargs = ('publish','-o',$tempfolder.FullName,'--configuration','Release','--wwwroot-out','wwwroot','--runtime',$dnxstring,'--quiet')
+                        $pubargs = ('publish',('"{0}"' -f $projpath.FullName),'--out', ('"{0}"' -f $tempfolder.FullName), '--configuration','Release','--runtime',$dnxstring,'--wwwroot-out','"wwwroot"' )                        
                         Invoke-CommandString -command (Join-Path $dnxbin 'dnu.cmd') -commandArgs $pubargs
+                        
+                        'Publishing to site [{0}] from folder [{1}]' -f $siteobj.Name,$tempfolder.FullName | Write-Verbose
                         # now publish from that folder to the remote azure site
-
                         [string]$username = ($siteobj.AzureSiteObj.SiteProperties.Properties|%{ if($_.Name -eq 'PublishingUsername'){$_.Value} })
                         [string]$pubpwd = ($siteobj.AzureSiteObj.SiteProperties.Properties|%{ if($_.Name -eq 'PublishingPassword'){$_.Value} })
                         [string]$msdeployurl = ('{0}:443' -f ($siteobj.AzureSiteObj.SiteProperties.Properties|%{ if($_.Name -eq 'RepositoryUri'){$_.Value} }) )
-                        $pubproperties = @{'WebPublishMethod'='MSDeploy';'MSDeployServiceUrl'=$msdeployurl;'DeployIisAppPath'=$siteobj.Name;'Username'=$username;'Password'=$pubpwd;'WebRoot'='wwwroot'}
+                        $pubproperties = @{'WebPublishMethod'='MSDeploy';'MSDeployServiceUrl'=$msdeployurl;'DeployIisAppPath'=$siteobj.Name;'Username'=$username;'Password'=$pubpwd;'WebRoot'='wwwroot';'SkipExtraFilesOnServer'=$false}
 
                         Publish-AspNet -packOutput ($tempfolder.FullName) -publishProperties $pubproperties
                     }
+                    catch{
+                        $_.Exception | Write-Error
+                    }
                     finally{
-                        Pop-Location
+                        Pop-Location | Out-Null
                     }
                 }
                 finally{
@@ -397,13 +416,13 @@ function Publish-WapSite{
 
             if(-not [string]::IsNullOrEmpty($siteobj.SolutionRoot)){
                 try{
-                    Push-Location
-                    Set-Location $siteobj.SolutionRoot
+                    Push-Location | Out-Null
+                    Set-Location $siteobj.SolutionRoot | Out-Null
                     'Restoring nuget packages for sln root [{0}]' -f $siteobj.SolutionRoot | Write-Verbose
                     Invoke-CommandString -command (Get-Nuget) -commandArgs @('restore')
                 }
                 finally{
-                    Pop-Location
+                    Pop-Location | Out-Null
                 }
             }
             else{
@@ -435,7 +454,6 @@ function Ensure-AzureWebsiteStopped{
         $stoppedsite = $false
         while($retries -le $numretries){
             # sleep to give logs a chance to be written
-            # Start-Sleep -Seconds 2
             if( (Stop-AzureWebsite -Name $name -PassThru) -eq $true){
                 $stoppedsite = $true
                 break;
@@ -449,7 +467,6 @@ function Ensure-AzureWebsiteStopped{
         }
     }
 }
-
 
 function Ensure-AzureWebsiteStarted{
     param(
@@ -500,10 +517,8 @@ function Delete-RemoteSiteContent{
             'Deleting files for site [{0}]' -f $azuresite.Name | Write-Verbose
             # first stop the site
             Ensure-AzureWebsiteStopped -Name ($azuresite.Name)
-            # delete the files in the remote
 
             # msdeploy.exe -verb:delete -dest:contentPath=sayed03/,ComputerName='https://sayed03.scm.azurewebsites.net/msdeploy.axd',UserName='$sayed03',Password='%pubpwd%',IncludeAcls='False',AuthType='Basic' -whatif
-
             $username = ($azuresite.SiteProperties.Properties|%{ if($_.Name -eq 'PublishingUsername'){$_.Value} })
             $pubpwd = ($azuresite.SiteProperties.Properties|%{ if($_.Name -eq 'PublishingPassword'){$_.Value} })
             $msdeployurl = ('{0}/msdeploy.axd' -f ($azuresite.SiteProperties.Properties|%{ if($_.Name -eq 'RepositoryUri'){$_.Value} }) )
@@ -598,7 +613,6 @@ function Ensure-DnvmInstalled{
     [cmdletbinding()]
     param()
     process{
-        # (Join-Path $env:USERPROFILE '.dnx\bin\dnvm.ps1')
         if(-not (Test-Path $dnvmpath)){
             throw ('Unable to find dnvm at [{0}]' -f $dnvmpath.FullName)
         }
@@ -607,18 +621,19 @@ function Ensure-DnvmInstalled{
 
 function Ensure-ClientToolsInstalled{
     [cmdletbinding()]
-    param()
+    param(
+        [System.IO.DirectoryInfo]$externaltoolspath = "${env:ProgramFiles(x86)}\Microsoft Visual Studio 14.0\Common7\IDE\Extensions\Microsoft\Web Tools\External\"
+    )
     process{
-        [System.IO.DirectoryInfo]$externaltools = "${env:ProgramFiles(x86)}\Microsoft Visual Studio 14.0\Common7\IDE\Extensions\Microsoft\Web Tools\External\"
-        if(Test-Path $externaltools){
-            Add-Path ($externaltools.FullName)
+        if(Test-Path $externaltoolspath){
+            Add-Path ($externaltoolspath.FullName)
         }
         else{
-            throw ('Unable to find external tools folder at [{0}]' -f $externaltools)
+            throw ('Unable to find external tools folder at [{0}]' -f $externaltoolspath)
         }
 
         # do this so that bower.cmd can be resolved as bower when post scripts are executed
-        Get-ChildItem $externaltools *.cmd | % {
+        Get-ChildItem $externaltoolspath *.cmd | % {
             Set-Alias ($_.BaseName) $_.FullName
         }
 
@@ -697,7 +712,7 @@ function Measure-Request{
 
                 $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
                 $resp = Invoke-WebRequest $fullurl -TimeoutSec (60*2)
-                $stopwatch.Stop()
+                $stopwatch.Stop() | Out-Null
                 [System.TimeSpan]$resptime = $stopwatch.Elapsed
             }
             catch{
@@ -710,15 +725,13 @@ function Measure-Request{
                 }
 
                 $sleeptime = $count + 1
-                if($count -gt 5){
-                    $sleeptime = 45
-                }
                 'Unable to complete web request, status code: [{0}]' -f $statusCodeStr | Write-Verbose
                 Start-Sleep $sleeptime
             }
         }while(
                 ( ($resp -eq $null) -or ($resp.StatusCode -ne 200)) -and 
                 ($count -le $numRetries))
+
 
         if( ($resp -eq $null) -or ($resp.StatusCode -ne 200)){
             
@@ -741,68 +754,6 @@ function Measure-Request{
             Iteration=$requestId
             ServerResponseTime = $null
             ServerLogString = $null
-        }
-    }
-}
-
-function Get-ServerResponseTimesFromLog{
-    [cmdletbinding()]
-    param(
-        [Parameter(Mandatory=$true,Position=0,ValueFromPipeline=$true)]
-        [string[]]$sitename,
-
-        [Parameter(Position=1)]
-        $testsessionid = $script:testsessionid,
-
-        [Parameter(Position=2)]
-        $numIterations = $script:numIterations,
-
-        [Parameter(Position=3,Mandatory=$true)]
-        [ValidateNotNull()]
-        [System.IO.DirectoryInfo]$logFolder
-
-    )
-    begin{
-        Add-Type -assembly "system.io.compression.filesystem"
-    }
-    process{
-        if(-not (Test-Path $logFolder.FullName)){
-            New-Item -ItemType Directory -Path $logFolder.FullName | Out-Null
-        }
-        foreach($name in $sitename){
-            [System.IO.DirectoryInfo]$sitelogfolder = (Join-Path $logFolder "$name-$testsessionid")
-            if(-not (Test-Path $sitelogfolder)){ New-Item -ItemType Directory -Path $sitelogfolder | Out-Null }
- 
-            # download the log files
-            [System.IO.FileInfo]$tempfile = (Join-Path $sitelogfolder.FullName 'logs.zip')
-            Save-AzureWebsiteLog -Name $name -Output $tempfile.FullName | Out-Null
-
-            # extract the log files to a temp folder
-            [io.compression.zipfile]::ExtractToDirectory($tempfile.FullName, $sitelogfolder.FullName) | Out-Null
-
-            [System.IO.DirectoryInfo]$httplogfolder = (Join-Path $sitelogfolder.FullName 'LogFiles\http\RawLogs')
-            $firstreqpattern = ('{0}.*testsessionid={1}&testrequest=first.*\s200\s\d+\s\d+\s\d+\s\d+\s\d+' -f [regex]::Escape($name.ToUpper()), $testsessionid)
-            $secondreqpattern = ('{0}.*testsessionid={1}&testrequest=second.*\s200\s\d+\s\d+\s\d+\s\d+\s\d+' -f [regex]::Escape($name.ToUpper()), $testsessionid)
-
-            $firstreqresponsetimes = (Get-ChildItem $httplogfolder *.log | Get-Content | Where-Object { $_ -match $firstreqpattern} | % { [int]($_.Substring($_.LastIndexOf(' ')+1)) }  | Measure-Object -Sum -Average)
-            $secondreqresponsetimes = (Get-ChildItem $httplogfolder *.log | Get-Content | Where-Object { $_ -match $secondreqpattern} | % { [int]($_.Substring($_.LastIndexOf(' ')+1)) }  | Measure-Object -Sum -Average)
-
-            '{0}:firstreqresponsetimes: [{1}]' -f $name, ($firstreqresponsetimes | Out-String) | Write-Verbose
-            '{0}:secondreqresponsetimes: [{1}]' -f $name, ($secondreqresponsetimes | Out-String) | Write-Verbose
-
-            if($firstreqresponsetimes -eq $null -or ($secondreqresponsetimes -eq $null)){
-                'Log results null' | Write-Warning
-            }
-            elseif($firstreqresponsetimes.Count -ne $numIterations -or ($secondreqresponsetimes.Count -ne $numIterations)){
-                'Expected [{0}] requests but only found [{1}] and [{2}]' -f $numIterations, $firstreqresponsetimes.Count,$secondreqresponsetimes.Count | Write-Warning
-            }
-
-            # return the result
-            New-Object -TypeName psobject -Property @{
-                Name = $name
-                AverageFirstRequestResponseTime = $firstreqresponsetimes.Average
-                AverageSecondRequestResponseTime = $secondreqresponsetimes.Average
-            }
         }
     }
 }
@@ -833,13 +784,12 @@ function Get-ServerResponseTimesFromLogRaw{
         }
         foreach($name in $sitename){
             [System.IO.DirectoryInfo]$sitelogfolder = (Join-Path $logFolder "$name-$testsessionid")
-            # download the log files
             [System.IO.FileInfo]$tempfile = (Join-Path $sitelogfolder.FullName 'logs.zip')
             
             if(-not (Test-Path $tempfile)){
                 if(-not (Test-Path $sitelogfolder)){ New-Item -ItemType Directory -Path $sitelogfolder | Out-Null }
                 Save-AzureWebsiteLog -Name $name -Output $tempfile.FullName | Out-Null
-                # extract the log files to a temp folder
+                # extract the log files
                 [io.compression.zipfile]::ExtractToDirectory($tempfile.FullName, $sitelogfolder.FullName) | Out-Null
             }
 
@@ -887,15 +837,8 @@ function Measure-SiteResponseTimesForAll{
                 foreach($site in $sites){
                     # stop the site
                     $siteobj = ($site.AzureSiteObj)
-                    
-                    # sleep to ensure logs are written before shut down
-                    #Start-Sleep 10
                     Stop-AzureWebsite -Name ($site.Name)
-                    # Start-Sleep 10
-                    # start the site
                     Start-AzureWebsite -Name ($site.Name)
-                    # give it a second to settle before making a request to avoid 502 errors
-                    # Start-Sleep -Seconds 10
 
                     $url = ('http://{0}' -f $siteobj.EnabledHostNames[0])
                     $measure = Measure-Request -url $url -numRetries $maxnumretries -name $siteobj.Name -testsessionid $script:testsessionid -whichrequest first -requestId $currentIteration
@@ -917,21 +860,21 @@ function Measure-SiteResponseTimesForAll{
                 }
             }
 
-            # wait 20 sec for iis logs to be written
-            # Start-Sleep 20
             # create a summary object for each site
             foreach($sitename in $sitestotest){
                 $avgmillifirst = (($results[$sitename].FirstRequest.ResponseTime|Measure-Object -Sum).Sum)/$numIterations
                 $avgmillisecond = (($results[$sitename].SecondRequest.ResponseTime|Measure-Object -Sum).Sum)/$numIterations
                 $totalattemptsfirstreq = (($results[$sitename].FirstRequest.NumAttempts|Measure-Object -Sum).Sum)
                 $totalattemptssecondreq = (($results[$sitename].SecondRequest.NumAttempts|Measure-Object -Sum).Sum)
-                
-                # download the http log files for the site and get time-spent for this request on first and second request
-                #$servertimes = Get-ServerResponseTimesFromLog -sitename $sitename -numIterations $numIterations -logFolder $logFolder
-                $serverresptimes = Get-ServerResponseTimesFromLogRaw -sitename $sitename -numIterations $numIterations -logFolder $logFolder
 
-                foreach($serverresp in $serverresptimes){
-                    try{
+                $serveravgfirst = $null
+                $serveravgsecond = $null
+                try{
+                    # download the http log files for the site and get time-spent for this request on first and second request
+                    $serverresptimes = Get-ServerResponseTimesFromLogRaw -sitename $sitename -numIterations $numIterations -logFolder $logFolder
+
+                    [string]$serverlogstr = $null
+                    foreach($serverresp in $serverresptimes){
                         switch($serverresp.WhichRequest){
                             'first' {
                                 $results[$sitename][$serverresp.Iteration-1].FirstRequest.ServerResponseTime = $serverresp.TimeSpent
@@ -939,34 +882,23 @@ function Measure-SiteResponseTimesForAll{
                             }
                             'second' {
                                 $results[$sitename][$serverresp.Iteration-1].SecondRequest.ServerResponseTime = $serverresp.TimeSpent
-                                $results[$sitename][$serverresp.Iteration-1].FirstRequest.ServerLogString = $serverresp.ServerLogString
+                                $results[$sitename][$serverresp.Iteration-1].SecondRequest.ServerLogString = $serverresp.ServerLogString
                             }
                         }
                     }
-                    catch{
-                        $msg = $_.Exception
-                    }                 
+
+                    $serveravgfirst = (($results[$sitename].FirstRequest.ServerResponseTime|Where-Object {$_ -ne $null}|Measure-Object -Average).Average)
+                    $serveravgsecond = (($results[$sitename].SecondRequest.ServerResponseTime|Where-Object {$_ -ne $null}|Measure-Object -Average).Average)
                 }
-
-                <#
-                    Iteration = $Matches['iteration']
-                    WhichRequest = $Matches['whichrequest']
-                    TimeSpent = $Matches['time']
-                #>
-
-
-                #$rawhttplogs = Get-ServerResponseTimesFromLogRaw -sitename $sitename -numIterations $numIterations -logFolder $logFolder
-
-                #$firstreqpattern = ('{0}.*testsessionid={1}&testrequest=first.*\s200\s\d+\s\d+\s\d+\s\d+\s\d+' -f [regex]::Escape($sitename.ToUpper()), $testsessionid)
-                #$secondreqpattern = ('{0}.*testsessionid={1}&testrequest=second.*\s200\s\d+\s\d+\s\d+\s\d+\s\d+' -f [regex]::Escape($sitename.ToUpper()), $testsessionid)
+                catch{
+                    "Unable to download azure http logs. {0} {1}" -f $_.Exception,(Get-PSCallStack|Out-String) | Write-Warning
+                }
 
                 # return the object
                 New-Object -TypeName psobject -Property @{
                     Name = $sitename
-                    #AverageFirstRequestResponseTime = ($servertimes.AverageFirstRequestResponseTime)
-                    #AverageSecondRequestResponseTime = ($servertimes.AverageSecondRequestResponseTime)
-                    AverageFirstRequestResponseTime = (($results[$sitename].FirstRequest.ServerResponseTime|Where-Object {$_ -ne $null}|Measure-Object -Average).Average)
-                    AverageSecondRequestResponseTime = (($results[$sitename].SecondRequest.ServerResponseTime|Where-Object {$_ -ne $null}|Measure-Object -Average).Average)
+                    AverageFirstRequestResponseTime = $serveravgfirst
+                    AverageSecondRequestResponseTime = $serveravgsecond
                     ClientAverageFirstRequestResponseTime = $avgmillifirst
                     ClientAverageSecondRequestResponseTime = $avgmillisecond
                     TotalNumAttemptsFirstResponse = $totalattemptsfirstreq
@@ -993,7 +925,7 @@ function CreateReport{
         [System.IO.FileInfo]$reportfilepath
     )
     process{
-        $testresult | ConvertTo-Json -Depth 100 |% {$_.Replace('  ',' ')} | Out-File $reportfilepath.FullName -Force
+        $testresult | ConvertTo-Json -Depth 100 |% {$_.Replace('  ',' ')} | Out-File $reportfilepath.FullName -Encoding ascii -Force
     }
 }
 
@@ -1004,45 +936,72 @@ function CreateReport{
 [System.IO.FileInfo]$samplebeta5xproj = (Join-Path $scriptDir 'samples\src\DnxWebBeta5\DnxWebBeta5.xproj')
 
 $sites = @(
-    New-SiteObject -name pubtwap2 -projectpath $samplewapproj -projectType WAP -SolutionRoot ($samplewapproj.Directory.Parent.Parent.FullName)
+    New-SiteObject -name pub-wapb -projectpath $samplewapproj -projectType WAP -SolutionRoot ($samplewapproj.Directory.Parent.Parent.FullName)
 
-    New-SiteObject -name pubttdnx-beta5-clr-withsource2 -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $true -dnxversion 1.0.0-beta5 -dnxfeed 'https://www.myget.org/F/aspnetbeta5/api/v2'
-    New-SiteObject -name pubttdnx-beta5-coreclr-withsource2 -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $true -dnxversion 1.0.0-beta5 -dnxfeed 'https://www.myget.org/F/aspnetbeta5/api/v2'
-    New-SiteObject -name pubttdnx-beta5-clr-nosource2 -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false -dnxversion 1.0.0-beta5 -dnxfeed 'https://www.myget.org/F/aspnetbeta5/api/v2'
-    New-SiteObject -name pubttdnx-beta5-coreclr-nosource2 -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false -dnxversion 1.0.0-beta5 -dnxfeed 'https://www.myget.org/F/aspnetbeta5/api/v2'
+    New-SiteObject -name pubdnx-beta4-clr-withsourceb -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $true  -dnxversion 1.0.0-beta4
+    New-SiteObject -name pubdnx-beta4-coreclr-withsourceb -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $true  -dnxversion 1.0.0-beta4 
+    New-SiteObject -name pubdnx-beta4-clr-nosourceb -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false  -dnxversion 1.0.0-beta4 
+    New-SiteObject -name pubdnx-beta4-coreclr-nosourceb -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $false  -dnxversion 1.0.0-beta4 
 
-    New-SiteObject -name pubttdnx-beta4-clr-withsource2 -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $true
-    New-SiteObject -name pubttdnx-beta4-coreclr-withsource2 -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $true
-    New-SiteObject -name pubttdnx-beta4-clr-nosource2 -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false
-    New-SiteObject -name pubttdnx-beta4-coreclr-nosource2 -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $false
+    New-SiteObject -name pubdnx-beta5-clr-withsourceb -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $true -dnxversion 1.0.0-beta5
+    New-SiteObject -name pubdnx-beta5-coreclr-withsourceb -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $true -dnxversion 1.0.0-beta5 -dnxfeed 'https://www.myget.org/F/aspnetbeta5/api/v2'
+    New-SiteObject -name pubdnx-beta5-clr-nosourceb -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false -dnxversion 1.0.0-beta5 -dnxfeed 'https://www.myget.org/F/aspnetbeta5/api/v2'
+    New-SiteObject -name pubdnx-beta5-coreclr-nosourceb -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false -dnxversion 1.0.0-beta5 -dnxfeed 'https://www.myget.org/F/aspnetbeta5/api/v2'
 )
 
-try{    
-    $starttime = Get-Date
-    'Start time: [{0}]. testsessionid: [{0}]' -f ($starttime.ToString('hh:mm:ss tt')),$testsessionid | Write-Verbose
- 
-    Initalize
-
-    $sites | Ensure-SiteExists
-    $sites | Populate-AzureWebSiteObjects
-    
-    $sites | Delete-RemoteSiteContent
-    $sites | Publish-Site
-
-    $result = Measure-SiteResponseTimesForAll -sites $sites
-    
-    $global:testresult = $result
-    CreateReport -testresult $result -reportfilepath $reportfilepath
-    # return the result to the caller
-    $result
-
-    # write out a summary at the end
-    $result | Select-Object Name,AverageFirstRequestResponseTime,AverageSecondRequestResponseTime, ClientAverageFirstRequestResponseTime,ClientAverageSecondRequestResponseTime | Format-Table | Out-String | Write-Host -ForegroundColor Green
-
-    $endtime = Get-Date
-    'End time: [{0}]. Time spent [{1}] seconds' -f $endtime.ToString('hh:mm:ss tt'),($endtime - $starttime).TotalSeconds | Write-Verbose
+if($stopSites){
+    'Stopping websites' | Write-Host
+    foreach($site in $sites){
+        try{
+            Stop-AzureWebsite -Name $site.Name
+        }
+        catch{
+            $_.Exception | Write-Warning
+        }
+    }
 }
-catch{
-    $msg = $_.Exception.ToString()
-    $msg | Write-Error
+elseif($deleteSites){
+    'Deleting all websites' | Write-Host
+    foreach($site in $sites){
+        try{
+            Remove-AzureWebsite -Name $site.Name -Force
+        }
+        catch{
+            $_.Exception | Write-Warning
+        }
+    }
+}
+else
+{
+    try{
+        $starttime = Get-Date
+        'Start time: [{0}]. testsessionid: [{0}]' -f ($starttime.ToString('hh:mm:ss tt')),$testsessionid | Write-Verbose
+ 
+        Initalize
+
+        $sites | Ensure-SiteExists
+        $sites | Populate-AzureWebSiteObjects
+
+        if(-not $skipPublish){
+ #           $sites | Delete-RemoteSiteContent
+            $sites | Publish-Site
+        }
+
+        $result = Measure-SiteResponseTimesForAll -sites $sites
+    
+        $global:testresult = $result
+        CreateReport -testresult $result -reportfilepath $reportfilepath
+        # return the result to the caller
+        $result
+
+        # write out a summary at the end
+        $result | Select-Object Name,AverageFirstRequestResponseTime,AverageSecondRequestResponseTime, ClientAverageFirstRequestResponseTime,ClientAverageSecondRequestResponseTime | Format-Table | Out-String | Write-Host -ForegroundColor Green
+
+        $endtime = Get-Date
+        'End time: [{0}]. Time spent [{1}] seconds' -f $endtime.ToString('hh:mm:ss tt'),($endtime - $starttime).TotalSeconds | Write-Verbose
+    }
+    catch{
+        $msg = $_.Exception.ToString()
+        $msg | Write-Error
+    }
 }
