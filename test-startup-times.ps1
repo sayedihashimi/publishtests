@@ -927,17 +927,17 @@ function CreateReport{
 [System.IO.FileInfo]$samplebeta5xproj = (Join-Path $scriptDir 'samples\src\DnxWebBeta5\DnxWebBeta5.xproj')
 
 $sites = @(
-    New-SiteObject -name pub-wap1a -projectpath $samplewapproj -projectType WAP -SolutionRoot ($samplewapproj.Directory.Parent.Parent.FullName)
+    New-SiteObject -name pub-wap -projectpath $samplewapproj -projectType WAP -SolutionRoot ($samplewapproj.Directory.Parent.Parent.FullName)
 
-    New-SiteObject -name pubdnx-beta4-clr-withsource1a -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $true  -dnxversion 1.0.0-beta4 -dnxfeed '"C:\Program Files (x86)\Microsoft Web Tools\DNU"'
-    New-SiteObject -name pubdnx-beta4-coreclr-withsource1a -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $true  -dnxversion 1.0.0-beta4  -dnxfeed '"C:\Program Files (x86)\Microsoft Web Tools\DNU"'
-    New-SiteObject -name pubdnx-beta4-clr-nosource1a -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false  -dnxversion 1.0.0-beta4  -dnxfeed '"C:\Program Files (x86)\Microsoft Web Tools\DNU"'
-    New-SiteObject -name pubdnx-beta4-coreclr-nosource1a -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $false  -dnxversion 1.0.0-beta4  -dnxfeed '"C:\Program Files (x86)\Microsoft Web Tools\DNU"'
+    New-SiteObject -name pubdnx-beta4-clr-withsource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $true  -dnxversion 1.0.0-beta4 -dnxfeed '"C:\Program Files (x86)\Microsoft Web Tools\DNU"'
+    New-SiteObject -name pubdnx-beta4-coreclr-withsource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $true  -dnxversion 1.0.0-beta4  -dnxfeed '"C:\Program Files (x86)\Microsoft Web Tools\DNU"'
+    New-SiteObject -name pubdnx-beta4-clr-nosource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false  -dnxversion 1.0.0-beta4  -dnxfeed '"C:\Program Files (x86)\Microsoft Web Tools\DNU"'
+    New-SiteObject -name pubdnx-beta4-coreclr-nosource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $false  -dnxversion 1.0.0-beta4  -dnxfeed '"C:\Program Files (x86)\Microsoft Web Tools\DNU"'
 
-    New-SiteObject -name pubdnx-beta5-clr-withsource1a -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $true -dnxversion 1.0.0-beta5  -dnxfeed '"C:\Program Files (x86)\Microsoft Web Tools\DNU"'
-    New-SiteObject -name pubdnx-beta5-coreclr-withsource1a -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $true -dnxversion 1.0.0-beta5 -dnxfeed '"C:\Program Files (x86)\Microsoft Web Tools\DNU"'
-    New-SiteObject -name pubdnx-beta5-clr-nosource1a -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false -dnxversion 1.0.0-beta5 -dnxfeed '"C:\Program Files (x86)\Microsoft Web Tools\DNU"'
-    New-SiteObject -name pubdnx-beta5-coreclr-nosource1a -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false -dnxversion 1.0.0-beta5 -dnxfeed '"C:\Program Files (x86)\Microsoft Web Tools\DNU"'
+    New-SiteObject -name pubdnx-beta5-clr-withsource -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $true -dnxversion 1.0.0-beta5  -dnxfeed '"C:\Program Files (x86)\Microsoft Web Tools\DNU"'
+    New-SiteObject -name pubdnx-beta5-coreclr-withsource -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $true -dnxversion 1.0.0-beta5 -dnxfeed '"C:\Program Files (x86)\Microsoft Web Tools\DNU"'
+    New-SiteObject -name pubdnx-beta5-clr-nosource -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false -dnxversion 1.0.0-beta5 -dnxfeed '"C:\Program Files (x86)\Microsoft Web Tools\DNU"'
+    New-SiteObject -name pubdnx-beta5-coreclr-nosource -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false -dnxversion 1.0.0-beta5 -dnxfeed '"C:\Program Files (x86)\Microsoft Web Tools\DNU"'
 )
 
 if($stopSites){
