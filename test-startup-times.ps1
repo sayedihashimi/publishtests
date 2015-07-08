@@ -280,6 +280,7 @@ function Publish-Site{
         # figure out if its dnx or a standard wap
         foreach($siteobj in $site){
             'Preparing to publish [{0}]' -f $siteobj.Name | Write-Verbose
+            Ensure-AzureWebsiteStopped -name $siteobj.Name
             switch($siteobj.ProjectType){
                 'DNX' {Publish-DnxSite -site $siteobj}
                 'WAP' {Publish-WapSite -site $siteobj}
