@@ -1,0 +1,43 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2012/06/nuspec.xsd">
+  <metadata>
+    <id>Microsoft.AspNet.Mvc.Razor</id>
+    <version>6.0.0-beta7</version>
+    <requireLicenseAcceptance>true</requireLicenseAcceptance>
+    <authors>Microsoft</authors>
+    <owners>Microsoft</owners>
+    <description>The Razor view engine for ASP.NET MVC.</description>
+    <dependencies>
+      <group targetFramework="DNX4.5.1">
+        <dependency id="Microsoft.AspNet.Mvc.Razor.Host" version="6.0.0-beta7" />
+        <dependency id="Microsoft.AspNet.Mvc.ViewFeatures" version="6.0.0-beta7" />
+        <dependency id="Microsoft.AspNet.PageExecutionInstrumentation.Interfaces" version="1.0.0-beta7" />
+        <dependency id="Microsoft.Dnx.Compilation.CSharp.Common" version="1.0.0-beta7" />
+        <dependency id="Microsoft.Dnx.Compilation.CSharp.Abstractions" version="1.0.0-beta7" />
+      </group>
+      <group targetFramework="DNXCore5.0">
+        <dependency id="Microsoft.AspNet.Mvc.Razor.Host" version="6.0.0-beta7" />
+        <dependency id="Microsoft.AspNet.Mvc.ViewFeatures" version="6.0.0-beta7" />
+        <dependency id="Microsoft.AspNet.PageExecutionInstrumentation.Interfaces" version="1.0.0-beta7" />
+        <dependency id="Microsoft.Dnx.Compilation.CSharp.Common" version="1.0.0-beta7" />
+        <dependency id="Microsoft.Dnx.Compilation.CSharp.Abstractions" version="1.0.0-beta7" />
+        <dependency id="System.Threading.Tasks.Parallel" version="4.0.1-beta-23225" />
+      </group>
+    </dependencies>
+    <frameworkAssemblies>
+      <frameworkAssembly assemblyName="System.Collections" targetFramework="DNX4.5.1" />
+      <frameworkAssembly assemblyName="System.IO" targetFramework="DNX4.5.1" />
+      <frameworkAssembly assemblyName="System.Runtime" targetFramework="DNX4.5.1" />
+      <frameworkAssembly assemblyName="System.Text.Encoding" targetFramework="DNX4.5.1" />
+      <frameworkAssembly assemblyName="System.Threading.Tasks" targetFramework="DNX4.5.1" />
+      <frameworkAssembly assemblyName="mscorlib" targetFramework="DNX4.5.1" />
+      <frameworkAssembly assemblyName="System" targetFramework="DNX4.5.1" />
+      <frameworkAssembly assemblyName="System.Core" targetFramework="DNX4.5.1" />
+      <frameworkAssembly assemblyName="Microsoft.CSharp" targetFramework="DNX4.5.1" />
+    </frameworkAssemblies>
+    <licenseUrl>http://www.microsoft.com/web/webpi/eula/net_library_eula_enu.htm</licenseUrl>
+    <iconUrl>http://go.microsoft.com/fwlink/?LinkID=288859</iconUrl>
+    <copyright>Copyright © Microsoft Corporation</copyright>
+    <projectUrl>http://www.asp.net/</projectUrl>
+  </metadata>
+</package>
