@@ -65,8 +65,9 @@ function Ensure-GeoffreyLoaded{
     }
 }
 
-[array]$global:publishResults = @()
 Ensure-GeoffreyLoaded
+
+[array]$global:publishResults = @()
 
 task default -dependsOn stop-all-sites,test-publish-default,test-publish-no-runtime-no-pkgs,test-publish-no-extra-client-files,test-publish-no-extra-client-files-no-runtime-no-pkgs,test-publish-no-source-no-extra-client-files-no-runtime-no-pkgs,print-results
 
@@ -76,7 +77,7 @@ task init {
 
 task stop-all-sites {
     # stop all remote sites here
-    Stop-Site -sitename ($global:publishsettings.AzureSiteName)
+    Stop-Site -sitename ($global:publishsettings.AzureSiteName) | Out-Null
 }
 
 task test-publish-default {
@@ -146,14 +147,13 @@ function InternalExecute-Test{
         [hashtable]$publishProperties = (InternalGet-PublishProperties)
     )
     process{
-        [string]
-        [ValidateNotNullOrEmpty()]
+
         $siteName = $publishProperties.DeployIisAppPath
         $pubProps = InternalGet-PublishProperties -sitename ($global:publishsettings.AzureSiteName)
-        Delete-RemoteSiteContent -publishProperties $pubProps
-        $result = (Publish-FolderToSite -testName $testName -path ($path.FullName) -publishProperties $pubProps)
+        Delete-RemoteSiteContent -publishProperties $pubProps | Write-Verbose
+        $pubresult = (Publish-FolderToSite -testName $testName -path ($path.FullName) -publishProperties $pubProps)
 
-        $global:publishResults+=$result
+        $global:publishResults += $pubresult
     }
 }
 
@@ -258,21 +258,12 @@ function Publish-FolderToSite{
         $publishProperties
     )
     process{
-        [string]
-        [ValidateNotNullOrEmpty()]
-        $msdeployUrl = $publishProperties.MSDeployServiceUrl
+        [string]$msdeployUrl = $publishProperties.MSDeployServiceUrl
+        [string]$iisAppPath = $publishProperties.DeployIisAppPath
 
-        [string]
-        [ValidateNotNullOrEmpty()]
-        $iisAppPath = $publishProperties.DeployIisAppPath
+        [string]$username = $publishProperties.Username
 
-        [string]
-        [ValidateNotNullOrEmpty()]
-        $username = $publishProperties.Username
-
-        [string]
-        [ValidateNotNullOrEmpty()]
-        $publishPassword = $publishProperties.Password
+        [string]$publishPassword = $publishProperties.Password
 
         [System.Diagnostics.Stopwatch]$stopwatch = $null
         $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
@@ -284,15 +275,18 @@ function Publish-FolderToSite{
             DeployIisAppPath = $iisAppPath
             Username = $username
             Password = $publishPassword
-        } | Write-Verbose
+        } | Write-Verbose | Out-Null
 
         $stopwatch.Stop() | Out-Null
         [System.TimeSpan]$resptime = $stopwatch.Elapsed
 
         # return the results
-        New-Object -TypeName psobject -Property @{
-            TestName = $testName
-            ElapsedTime = [System.TimeSpan]$resptime
+        $result = New-Object -TypeName psobject -Property @{
+            TestName = [string]$testName
+            ElapsedTime = ($resptime.Milliseconds)
         }
+
+        # return the result
+        $result
     }
 }
