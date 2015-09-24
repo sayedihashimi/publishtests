@@ -29,7 +29,7 @@ $scriptDir = ((InternalGet-ScriptDirectory) + "\")
 $global:publishsettings = New-Object -TypeName psobject -Property @{
     MinGeoffreyModuleVersion = '0.0.10.1'
     PubSamplesRoot = [System.IO.DirectoryInfo](Join-Path $scriptDir 'publish-samples')
-    NumIterations = 10
+    NumIterations = 2
     AzureSiteName = 'sayedpubdemo01'
 }
 
@@ -148,11 +148,11 @@ function InternalExecute-Test{
     )
     process{
 
-        $siteName = $publishProperties.DeployIisAppPath
-        $pubProps = InternalGet-PublishProperties -sitename ($global:publishsettings.AzureSiteName)
-        Delete-RemoteSiteContent -publishProperties $pubProps | Write-Verbose
+        $pubProps = InternalGet-PublishProperties -sitename ($publishProperties.DeployIisAppPath)
 
         for($i = 0;$i -le ($global:publishsettings.NumIterations);$i++){
+            Delete-RemoteSiteContent -publishProperties $pubProps | Write-Verbose
+            Start-Sleep -Seconds 1
             $pubresult = (Publish-FolderToSite -testName $testName -path ($path.FullName) -publishProperties $pubProps)
 
             $global:publishResults += $pubresult
@@ -248,6 +248,32 @@ function InternalGet-PublishProperties{
     }
 }
 
+function PrintReport{
+    [cmdletbinding()]
+    param(
+        [array]$allresults = ($global:publishResults)
+    )
+    process{
+        $allresults | Group-Object -Property Testname |% {
+            $current = $_
+            $result = ($current.Group.ElapsedTime|Measure-Object -Sum -Minimum -Maximum -Average|Select-Object -Property Average,Minimum,Maximum,Sum)
+            #$current.Group
+            [int]$numfiles = ($current.Group.NumFiles|Select-Object -First 1)
+            [int]$sizekb = ($current.Group.TotalSizeKB|Select-Object -First 1)
+
+            New-Object -TypeName psobject -Property @{
+                Testname = $current.Name
+                AverageTime = [int]$result.Average
+                MinimumTime = [int]$result.Minimum
+                MaximumTime = [int]$result.Maximum
+                TotalTimeAll = [int]$result.Sum
+                NumFiles = $numfiles
+                SizeKB = $sizekb
+            }
+        }
+    }
+}
+
 function Publish-FolderToSite{
     [cmdletbinding()]
     param(
@@ -287,7 +313,7 @@ function Publish-FolderToSite{
             TestName = [string]$testName
             ElapsedTime = ($stopwatch.ElapsedMilliseconds)
             NumFiles = ((Get-ChildItem $path -Recurse -File).Length)
-            TotalBytes =  ((Get-ChildItem $path | Measure-Object -property length -sum).Sum)
+            TotalSizeKB =  (((Get-ChildItem $path -Recurse | Measure-Object -property length -sum).Sum)/1KB)
         }
 
         # return the result
