@@ -65,9 +65,10 @@ function Ensure-GeoffreyLoaded{
     }
 }
 
+[array]$global:publishResults = @()
 Ensure-GeoffreyLoaded
 
-task default -dependsOn stop-all-sites,test-publish-default,test-publish-no-runtime-no-pkgs,test-publish-no-extra-client-files,test-publish-no-extra-client-files-no-runtime-no-pkgs,test-publish-no-source-no-extra-client-files-no-runtime-no-pkgs
+task default -dependsOn stop-all-sites,test-publish-default,test-publish-no-runtime-no-pkgs,test-publish-no-extra-client-files,test-publish-no-extra-client-files-no-runtime-no-pkgs,test-publish-no-source-no-extra-client-files-no-runtime-no-pkgs,print-results
 
 task init {
     requires -nameorurl publish-module -version 1.0.2-beta1 -noprefix
@@ -81,32 +82,78 @@ task stop-all-sites {
 task test-publish-default {
 
     [System.IO.DirectoryInfo]$path = (Join-Path ($global:publishsettings.PubSamplesRoot) '01-default')
-    $pubProps = InternalGet-PublishProperties -sitename ($global:publishsettings.AzureSiteName)
-    Delete-RemoteSiteContent -publishProperties $pubProps
-    Publish-FolderToSite -path ($path.FullName) -publishProperties $pubProps
+    InternalExecute-Test -testName 'test-publish-default' -path $path
 
 } -dependsOn stop-all-sites
 
 task test-publish-no-runtime-no-pkgs{
+
+    [System.IO.DirectoryInfo]$path = (Join-Path ($global:publishsettings.PubSamplesRoot) '02-no-runtime-no-pkgs')
+    InternalExecute-Test -testName 'test-publish-no-runtime-no-pkgs' -path $path
+
 } -dependsOn stop-all-sites
 
 task test-publish-no-extra-client-files{
+
+    [System.IO.DirectoryInfo]$path = (Join-Path ($global:publishsettings.PubSamplesRoot) '03-no-extra-client-files')
+    InternalExecute-Test -testName 'test-publish-no-extra-client-files' -path $path
+
 } -dependsOn stop-all-sites
 
 task test-publish-no-extra-client-files-no-runtime-no-pkgs{
+
+    [System.IO.DirectoryInfo]$path = (Join-Path ($global:publishsettings.PubSamplesRoot) '04-no-extra-client-files-no-runtime-no-pkgs')
+    InternalExecute-Test -testName 'test-publish-no-extra-client-files-no-runtime-no-pkgs' -path $path
+
 } -dependsOn stop-all-sites
 
 task test-publish-no-source-no-extra-client-files-no-runtime-no-pkgs{
+
+    [System.IO.DirectoryInfo]$path = (Join-Path ($global:publishsettings.PubSamplesRoot) '05-no-source-no-extra-client-files-no-runtime-no-pkgs')
+    InternalExecute-Test -testName 'test-publish-no-source-no-extra-client-files-no-runtime-no-pkgs' -path $path
+
 } -dependsOn stop-all-sites
+
+task print-results{
+    $global:publishResults | Write-Host -ForegroundColor Cyan
+}
 
 function Stop-Site{
     [cmdletbinding()]
     param(
         [Parameter(Position=0,Mandatory=$true,ValueFromPipeline=$true)]
+        [ValidateNotNullOrEmpty()]
         $sitename
     )
     process{
         # stop the site here
+        Stop-AzureWebsite -Name $sitename
+    }
+}
+
+function InternalExecute-Test{
+    [cmdletbinding()]
+    param(
+        [Parameter(Position=0,Mandatory=$true)]
+        [ValidateNotNullOrEmpty()]
+        [string]$testName,
+
+        [Parameter(Position=1,Mandatory=$true)]
+        [System.IO.DirectoryInfo]$path,
+
+        [Parameter(Position=2)]
+        [ValidateNotNull()]
+        [hashtable]$publishProperties = (InternalGet-PublishProperties)
+    )
+    process{
+        [string]
+        [ValidateNotNullOrEmpty()]
+        $siteName = $publishProperties.DeployIisAppPath
+        $pubProps = InternalGet-PublishProperties -sitename ($global:publishsettings.AzureSiteName)
+        Delete-RemoteSiteContent -publishProperties $pubProps
+        $result = (Publish-FolderToSite -testName $testName -path ($path.FullName) -publishProperties $pubProps)
+
+        $global:publishResults+=$result
     }
 }
 
@@ -163,7 +210,7 @@ function Delete-RemoteSiteContent{
             $msdeployurl = $props.MSDeployServiceURL
             $destarg = ('contentPath={0}/,ComputerName=''{1}'',UserName=''{2}'',Password=''{3}'',IncludeAcls=''False'',AuthType=''Basic''' -f $sitename, $msdeployurl, $username,$pubpwd )
             $msdeployargs = @('-verb:delete',('-dest:{0}' -f $destarg),'-retryAttempts:3')
-            Invoke-CommandString -command (Get-MSDeploy) -commandArgs $msdeployargs
+            Invoke-CommandString -command (Get-MSDeploy) -commandArgs $msdeployargs | Write-Verbose
         }
     }
 }
@@ -172,8 +219,8 @@ function Delete-RemoteSiteContent{
 function InternalGet-PublishProperties{
     [cmdletbinding()]
     param(
-        [Parameter(Position=0,Mandatory=$true,ValueFromPipeline=$true)]
-        $sitename
+        [Parameter(Position=0)]
+        $sitename = ($global:publishsettings.AzureSiteName)
     )
     process{
         if($script:pubProps -eq $null){
@@ -202,23 +249,50 @@ function Publish-FolderToSite{
     [cmdletbinding()]
     param(
         [Parameter(Position=0,Mandatory=$true,ValueFromPipeline=$true)]
+        [string]$testName,
+
+        [Parameter(Position=1,Mandatory=$true)]
         [System.IO.DirectoryInfo]$path,
 
-        [Paramter(Position=1,Mandatory=$true)]
+        [Parameter(Position=2,Mandatory=$true)]
         $publishProperties
     )
-    process{    
-        [string]$msdeployUrl = $null
-        [string]$iisAppPath = $null
-        [string]$username = $null
-        [string]$publishPassword = $null
+    process{
+        [string]
+        [ValidateNotNullOrEmpty()]
+        $msdeployUrl = $publishProperties.MSDeployServiceUrl
+
+        [string]
+        [ValidateNotNullOrEmpty()]
+        $iisAppPath = $publishProperties.DeployIisAppPath
+
+        [string]
+        [ValidateNotNullOrEmpty()]
+        $username = $publishProperties.Username
+
+        [string]
+        [ValidateNotNullOrEmpty()]
+        $publishPassword = $publishProperties.Password
+
+        [System.Diagnostics.Stopwatch]$stopwatch = $null
+        $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+        
         # publish the site to the remote dest using Publish-AspNet
-        Publish-Aspnet -packOutput $path -publishProperties @{
+        Publish-Aspnet -packOutput ($path.FullName) -publishProperties @{
             WebPublishMethod = 'MSDeploy'
             MSDeployServiceURL = $msdeployUrl
             DeployIisAppPath = $iisAppPath
             Username = $username
             Password = $publishPassword
+        } | Write-Verbose
+
+        $stopwatch.Stop() | Out-Null
+        [System.TimeSpan]$resptime = $stopwatch.Elapsed
+
+        # return the results
+        New-Object -TypeName psobject -Property @{
+            TestName = $testName
+            ElapsedTime = [System.TimeSpan]$resptime
         }
     }
 }
