@@ -29,7 +29,7 @@ $scriptDir = ((InternalGet-ScriptDirectory) + "\")
 $global:publishsettings = New-Object -TypeName psobject -Property @{
     MinGeoffreyModuleVersion = '0.0.10.1'
     PubSamplesRoot = [System.IO.DirectoryInfo](Join-Path $scriptDir 'publish-samples')
-    NumIterations = 1
+    NumIterations = 10
     AzureSiteName = 'sayedpubdemo01'
 }
 
@@ -151,9 +151,12 @@ function InternalExecute-Test{
         $siteName = $publishProperties.DeployIisAppPath
         $pubProps = InternalGet-PublishProperties -sitename ($global:publishsettings.AzureSiteName)
         Delete-RemoteSiteContent -publishProperties $pubProps | Write-Verbose
-        $pubresult = (Publish-FolderToSite -testName $testName -path ($path.FullName) -publishProperties $pubProps)
 
-        $global:publishResults += $pubresult
+        for($i = 0;$i -le ($global:publishsettings.NumIterations);$i++){
+            $pubresult = (Publish-FolderToSite -testName $testName -path ($path.FullName) -publishProperties $pubProps)
+
+            $global:publishResults += $pubresult
+        }
     }
 }
 
@@ -278,12 +281,13 @@ function Publish-FolderToSite{
         } | Write-Verbose | Out-Null
 
         $stopwatch.Stop() | Out-Null
-        [System.TimeSpan]$resptime = $stopwatch.Elapsed
 
         # return the results
         $result = New-Object -TypeName psobject -Property @{
             TestName = [string]$testName
-            ElapsedTime = ($resptime.Milliseconds)
+            ElapsedTime = ($stopwatch.ElapsedMilliseconds)
+            NumFiles = ((Get-ChildItem $path -Recurse -File).Length)
+            TotalBytes =  ((Get-ChildItem $path | Measure-Object -property length -sum).Sum)
         }
 
         # return the result
