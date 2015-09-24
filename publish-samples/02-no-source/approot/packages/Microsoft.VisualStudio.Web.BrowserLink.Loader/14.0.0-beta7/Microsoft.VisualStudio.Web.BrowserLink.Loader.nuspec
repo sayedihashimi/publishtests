@@ -1,0 +1,41 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2012/06/nuspec.xsd">
+  <metadata>
+    <id>Microsoft.VisualStudio.Web.BrowserLink.Loader</id>
+    <version>14.0.0-beta7</version>
+    <requireLicenseAcceptance>true</requireLicenseAcceptance>
+    <authors>Microsoft</authors>
+    <owners>Microsoft</owners>
+    <description>Microsoft.VisualStudio.Web.BrowserLink.Loader</description>
+    <dependencies>
+      <group targetFramework="DNX4.5.1">
+        <dependency id="Microsoft.AspNet.FileProviders.Physical" version="1.0.0-beta7" />
+        <dependency id="Microsoft.AspNet.Http.Abstractions" version="1.0.0-beta7" />
+        <dependency id="Microsoft.AspNet.PageExecutionInstrumentation.Interfaces" version="1.0.0-beta7" />
+        <dependency id="Microsoft.Dnx.Runtime.Abstractions" version="1.0.0-beta7" />
+      </group>
+      <group targetFramework="DNXCore5.0">
+        <dependency id="Microsoft.AspNet.FileProviders.Physical" version="1.0.0-beta7" />
+        <dependency id="Microsoft.AspNet.Http.Abstractions" version="1.0.0-beta7" />
+        <dependency id="Microsoft.AspNet.PageExecutionInstrumentation.Interfaces" version="1.0.0-beta7" />
+        <dependency id="Microsoft.Dnx.Runtime.Abstractions" version="1.0.0-beta7" />
+        <dependency id="Microsoft.Win32.Registry" version="4.0.0-beta-23225" />
+        <dependency id="System.Collections" version="4.0.10" />
+        <dependency id="System.Net.Sockets" version="4.0.10-beta-23123" />
+        <dependency id="System.Reflection.Extensions" version="4.0.0" />
+        <dependency id="System.Runtime.InteropServices" version="4.0.20" />
+        <dependency id="System.Threading" version="4.0.10" />
+      </group>
+    </dependencies>
+    <frameworkAssemblies>
+      <frameworkAssembly assemblyName="mscorlib" targetFramework="DNX4.5.1" />
+      <frameworkAssembly assemblyName="System" targetFramework="DNX4.5.1" />
+      <frameworkAssembly assemblyName="System.Core" targetFramework="DNX4.5.1" />
+      <frameworkAssembly assemblyName="Microsoft.CSharp" targetFramework="DNX4.5.1" />
+    </frameworkAssemblies>
+    <licenseUrl>http://www.microsoft.com/web/webpi/eula/net_library_eula_enu.htm</licenseUrl>
+    <iconUrl>http://go.microsoft.com/fwlink/?LinkID=288859</iconUrl>
+    <copyright>Copyright © Microsoft Corporation</copyright>
+    <projectUrl>http://www.asp.net/</projectUrl>
+  </metadata>
+</package>

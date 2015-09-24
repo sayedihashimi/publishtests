@@ -1,0 +1,69 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2012/06/nuspec.xsd">
+  <metadata>
+    <id>WebApplication2</id>
+    <version>1.0.0</version>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <authors>WebApplication2</authors>
+    <owners>WebApplication2</owners>
+    <description>WebApplication2</description>
+    <dependencies>
+      <group targetFramework="DNX4.5.1">
+        <dependency id="EntityFramework.Commands" version="7.0.0-beta7" />
+        <dependency id="EntityFramework.SqlServer" version="7.0.0-beta7" />
+        <dependency id="Microsoft.AspNet.Authentication.Cookies" version="1.0.0-beta7" />
+        <dependency id="Microsoft.AspNet.Authentication.Facebook" version="1.0.0-beta7" />
+        <dependency id="Microsoft.AspNet.Authentication.Google" version="1.0.0-beta7" />
+        <dependency id="Microsoft.AspNet.Authentication.MicrosoftAccount" version="1.0.0-beta7" />
+        <dependency id="Microsoft.AspNet.Authentication.Twitter" version="1.0.0-beta7" />
+        <dependency id="Microsoft.AspNet.Diagnostics" version="1.0.0-beta7" />
+        <dependency id="Microsoft.AspNet.Diagnostics.Entity" version="7.0.0-beta7" />
+        <dependency id="Microsoft.AspNet.Identity.EntityFramework" version="3.0.0-beta7" />
+        <dependency id="Microsoft.AspNet.Mvc" version="6.0.0-beta7" />
+        <dependency id="Microsoft.AspNet.Mvc.TagHelpers" version="6.0.0-beta7" />
+        <dependency id="Microsoft.AspNet.Server.IIS" version="1.0.0-beta7" />
+        <dependency id="Microsoft.AspNet.Server.WebListener" version="1.0.0-beta7" />
+        <dependency id="Microsoft.AspNet.StaticFiles" version="1.0.0-beta7" />
+        <dependency id="Microsoft.AspNet.Tooling.Razor" version="1.0.0-beta7" />
+        <dependency id="Microsoft.Framework.Configuration.Abstractions" version="1.0.0-beta7" />
+        <dependency id="Microsoft.Framework.Configuration.Json" version="1.0.0-beta7" />
+        <dependency id="Microsoft.Framework.Configuration.UserSecrets" version="1.0.0-beta7" />
+        <dependency id="Microsoft.Framework.Logging" version="1.0.0-beta7" />
+        <dependency id="Microsoft.Framework.Logging.Console" version="1.0.0-beta7" />
+        <dependency id="Microsoft.Framework.Logging.Debug" version="1.0.0-beta7" />
+        <dependency id="Microsoft.VisualStudio.Web.BrowserLink.Loader" version="14.0.0-beta7" />
+      </group>
+      <group targetFramework="DNXCore5.0">
+        <dependency id="EntityFramework.Commands" version="7.0.0-beta7" />
+        <dependency id="EntityFramework.SqlServer" version="7.0.0-beta7" />
+        <dependency id="Microsoft.AspNet.Authentication.Cookies" version="1.0.0-beta7" />
+        <dependency id="Microsoft.AspNet.Authentication.Facebook" version="1.0.0-beta7" />
+        <dependency id="Microsoft.AspNet.Authentication.Google" version="1.0.0-beta7" />
+        <dependency id="Microsoft.AspNet.Authentication.MicrosoftAccount" version="1.0.0-beta7" />
+        <dependency id="Microsoft.AspNet.Authentication.Twitter" version="1.0.0-beta7" />
+        <dependency id="Microsoft.AspNet.Diagnostics" version="1.0.0-beta7" />
+        <dependency id="Microsoft.AspNet.Diagnostics.Entity" version="7.0.0-beta7" />
+        <dependency id="Microsoft.AspNet.Identity.EntityFramework" version="3.0.0-beta7" />
+        <dependency id="Microsoft.AspNet.Mvc" version="6.0.0-beta7" />
+        <dependency id="Microsoft.AspNet.Mvc.TagHelpers" version="6.0.0-beta7" />
+        <dependency id="Microsoft.AspNet.Server.IIS" version="1.0.0-beta7" />
+        <dependency id="Microsoft.AspNet.Server.WebListener" version="1.0.0-beta7" />
+        <dependency id="Microsoft.AspNet.StaticFiles" version="1.0.0-beta7" />
+        <dependency id="Microsoft.AspNet.Tooling.Razor" version="1.0.0-beta7" />
+        <dependency id="Microsoft.Framework.Configuration.Abstractions" version="1.0.0-beta7" />
+        <dependency id="Microsoft.Framework.Configuration.Json" version="1.0.0-beta7" />
+        <dependency id="Microsoft.Framework.Configuration.UserSecrets" version="1.0.0-beta7" />
+        <dependency id="Microsoft.Framework.Logging" version="1.0.0-beta7" />
+        <dependency id="Microsoft.Framework.Logging.Console" version="1.0.0-beta7" />
+        <dependency id="Microsoft.Framework.Logging.Debug" version="1.0.0-beta7" />
+        <dependency id="Microsoft.VisualStudio.Web.BrowserLink.Loader" version="14.0.0-beta7" />
+      </group>
+    </dependencies>
+    <frameworkAssemblies>
+      <frameworkAssembly assemblyName="mscorlib" targetFramework="DNX4.5.1" />
+      <frameworkAssembly assemblyName="System" targetFramework="DNX4.5.1" />
+      <frameworkAssembly assemblyName="System.Core" targetFramework="DNX4.5.1" />
+      <frameworkAssembly assemblyName="Microsoft.CSharp" targetFramework="DNX4.5.1" />
+    </frameworkAssemblies>
+  </metadata>
+</package>

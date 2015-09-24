@@ -1,0 +1,48 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2012/06/nuspec.xsd">
+  <metadata>
+    <id>Microsoft.AspNet.Loader.IIS</id>
+    <version>1.0.0-beta7</version>
+    <requireLicenseAcceptance>true</requireLicenseAcceptance>
+    <authors>Microsoft</authors>
+    <owners>Microsoft</owners>
+    <description>ASP.NET 5 server implementation for IIS and IIS Express.</description>
+    <dependencies>
+      <group targetFramework="DNX4.5.1">
+        <dependency id="Microsoft.AspNet.DataProtection.Abstractions" version="1.0.0-beta7" />
+        <dependency id="Microsoft.AspNet.Hosting" version="1.0.0-beta7" />
+        <dependency id="Microsoft.Framework.Configuration.EnvironmentVariables" version="1.0.0-beta7" />
+        <dependency id="Microsoft.Framework.Configuration.Ini" version="1.0.0-beta7" />
+        <dependency id="Microsoft.Dnx.Compilation.Abstractions" version="1.0.0-beta7" />
+        <dependency id="Microsoft.Framework.WebEncoders.Core" version="1.0.0-beta7" />
+      </group>
+      <group targetFramework="DNXCore5.0">
+        <dependency id="Microsoft.AspNet.DataProtection.Abstractions" version="1.0.0-beta7" />
+        <dependency id="Microsoft.AspNet.Hosting" version="1.0.0-beta7" />
+        <dependency id="Microsoft.Framework.Configuration.EnvironmentVariables" version="1.0.0-beta7" />
+        <dependency id="Microsoft.Framework.Configuration.Ini" version="1.0.0-beta7" />
+        <dependency id="Microsoft.Dnx.Compilation.Abstractions" version="1.0.0-beta7" />
+        <dependency id="Microsoft.Framework.WebEncoders.Core" version="1.0.0-beta7" />
+        <dependency id="Microsoft.Win32.Registry" version="4.0.0-beta-23225" />
+        <dependency id="System.Diagnostics.Process" version="4.0.0-beta-23225" />
+        <dependency id="System.Net.NetworkInformation" version="4.0.10-beta-23123" />
+        <dependency id="System.Reflection.Extensions" version="4.0.1-beta-23225" />
+        <dependency id="System.Security.Principal.Windows" version="4.0.0-beta-23225" />
+        <dependency id="System.Text.Encoding" version="4.0.11-beta-23225" />
+        <dependency id="System.Text.Encoding.Extensions" version="4.0.11-beta-23225" />
+        <dependency id="System.Threading" version="4.0.11-beta-23225" />
+        <dependency id="System.Threading.ThreadPool" version="4.0.10-beta-23225" />
+      </group>
+    </dependencies>
+    <frameworkAssemblies>
+      <frameworkAssembly assemblyName="mscorlib" targetFramework="DNX4.5.1" />
+      <frameworkAssembly assemblyName="System" targetFramework="DNX4.5.1" />
+      <frameworkAssembly assemblyName="System.Core" targetFramework="DNX4.5.1" />
+      <frameworkAssembly assemblyName="Microsoft.CSharp" targetFramework="DNX4.5.1" />
+    </frameworkAssemblies>
+    <licenseUrl>http://www.microsoft.com/web/webpi/eula/net_library_eula_enu.htm</licenseUrl>
+    <iconUrl>http://go.microsoft.com/fwlink/?LinkID=288859</iconUrl>
+    <copyright>Copyright © Microsoft Corporation</copyright>
+    <projectUrl>http://www.asp.net/</projectUrl>
+  </metadata>
+</package>
