@@ -29,7 +29,7 @@ $scriptDir = ((InternalGet-ScriptDirectory) + "\")
 $global:publishsettings = New-Object -TypeName psobject -Property @{
     MinGeoffreyModuleVersion = '0.0.10.1'
     PubSamplesRoot = [System.IO.DirectoryInfo](Join-Path $scriptDir 'publish-samples')
-    NumIterations = 2
+    NumIterations = 10
     AzureSiteName = 'sayedpubdemo01'
 }
 
@@ -69,7 +69,7 @@ Ensure-GeoffreyLoaded
 
 [array]$global:publishResults = @()
 
-task default -dependsOn stop-all-sites,test-publish-default,test-publish-no-runtime-no-pkgs,test-publish-no-extra-client-files,test-publish-no-extra-client-files-no-runtime-no-pkgs,test-publish-no-source-no-extra-client-files-no-runtime-no-pkgs,print-results
+task default -dependsOn stop-all-sites,test-publish-default,test-publish-no-pkgs,test-publish-no-runtime,test-publish-no-runtime-no-pkgs,test-publish-no-extra-client-files,test-publish-no-extra-client-files-no-runtime-no-pkgs,test-publish-no-source-no-extra-client-files-no-runtime-no-pkgs,print-results
 
 task init {
     requires -nameorurl publish-module -version 1.0.2-beta1 -noprefix
@@ -87,30 +87,44 @@ task test-publish-default {
 
 } -dependsOn stop-all-sites
 
+task test-publish-no-pkgs{
+
+    [System.IO.DirectoryInfo]$path = (Join-Path ($global:publishsettings.PubSamplesRoot) '02-no-pkgs')
+    InternalExecute-Test -testName 'test-publish-no-pkgs' -path $path
+
+} -dependsOn stop-all-sites
+
+task test-publish-no-runtime{
+
+    [System.IO.DirectoryInfo]$path = (Join-Path ($global:publishsettings.PubSamplesRoot) '03-no-runtime')
+    InternalExecute-Test -testName 'test-publish-no-runtime' -path $path
+
+} -dependsOn stop-all-sites
+
 task test-publish-no-runtime-no-pkgs{
 
-    [System.IO.DirectoryInfo]$path = (Join-Path ($global:publishsettings.PubSamplesRoot) '02-no-runtime-no-pkgs')
+    [System.IO.DirectoryInfo]$path = (Join-Path ($global:publishsettings.PubSamplesRoot) '04-no-runtime-no-pkgs')
     InternalExecute-Test -testName 'test-publish-no-runtime-no-pkgs' -path $path
 
 } -dependsOn stop-all-sites
 
 task test-publish-no-extra-client-files{
 
-    [System.IO.DirectoryInfo]$path = (Join-Path ($global:publishsettings.PubSamplesRoot) '03-no-extra-client-files')
+    [System.IO.DirectoryInfo]$path = (Join-Path ($global:publishsettings.PubSamplesRoot) '05-no-extra-client-files')
     InternalExecute-Test -testName 'test-publish-no-extra-client-files' -path $path
 
 } -dependsOn stop-all-sites
 
 task test-publish-no-extra-client-files-no-runtime-no-pkgs{
 
-    [System.IO.DirectoryInfo]$path = (Join-Path ($global:publishsettings.PubSamplesRoot) '04-no-extra-client-files-no-runtime-no-pkgs')
+    [System.IO.DirectoryInfo]$path = (Join-Path ($global:publishsettings.PubSamplesRoot) '06-no-extra-client-files-no-runtime-no-pkgs')
     InternalExecute-Test -testName 'test-publish-no-extra-client-files-no-runtime-no-pkgs' -path $path
 
 } -dependsOn stop-all-sites
 
 task test-publish-no-source-no-extra-client-files-no-runtime-no-pkgs{
 
-    [System.IO.DirectoryInfo]$path = (Join-Path ($global:publishsettings.PubSamplesRoot) '05-no-source-no-extra-client-files-no-runtime-no-pkgs')
+    [System.IO.DirectoryInfo]$path = (Join-Path ($global:publishsettings.PubSamplesRoot) '07-no-source-no-extra-client-files-no-runtime-no-pkgs')
     InternalExecute-Test -testName 'test-publish-no-source-no-extra-client-files-no-runtime-no-pkgs' -path $path
 
 } -dependsOn stop-all-sites
