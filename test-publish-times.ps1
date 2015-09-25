@@ -29,7 +29,7 @@ $scriptDir = ((InternalGet-ScriptDirectory) + "\")
 $global:publishsettings = New-Object -TypeName psobject -Property @{
     MinGeoffreyModuleVersion = '0.0.10.1'
     PubSamplesRoot = [System.IO.DirectoryInfo](Join-Path $scriptDir 'publish-samples')
-    NumIterations = 25
+    NumIterations = 5
     AzureSiteName = 'sayedpubdemo01'
 }
 
@@ -172,7 +172,7 @@ function InternalExecute-Test{
 
         $pubProps = InternalGet-PublishProperties -sitename ($publishProperties.DeployIisAppPath)
 
-        for($i = 0;$i -le ($global:publishsettings.NumIterations);$i++){
+        for($i = 0;$i -lt ($global:publishsettings.NumIterations);$i++){
             Delete-RemoteSiteContent -publishProperties $pubProps | Write-Verbose
             Start-Sleep -Seconds 1
             $pubresult = (Publish-FolderToSite -testName $testName -path ($path.FullName) -publishProperties $pubProps)
@@ -228,14 +228,19 @@ function Delete-RemoteSiteContent{
     process{
         foreach($props in $publishProperties){
             'Deleting remote content for site [{0}]' -f ($props.DeployIisAppPath) | Write-Verbose
-            $sitename = $props.DeployIisAppPath
-            # msdeploy.exe -verb:delete -dest:contentPath=sayed03/,ComputerName='https://sayed03.scm.azurewebsites.net/msdeploy.axd',UserName='$sayed03',Password='%pubpwd%',IncludeAcls='False',AuthType='Basic' -whatif
-            $username = $props.Username
-            $pubpwd = $props.Password
-            $msdeployurl = $props.MSDeployServiceURL
-            $destarg = ('contentPath={0}/,ComputerName=''{1}'',UserName=''{2}'',Password=''{3}'',IncludeAcls=''False'',AuthType=''Basic''' -f $sitename, $msdeployurl, $username,$pubpwd )
-            $msdeployargs = @('-verb:delete',('-dest:{0}' -f $destarg),'-retryAttempts:3')
-            Invoke-CommandString -command (Get-MSDeploy) -commandArgs $msdeployargs | Write-Verbose
+            # publish an empty app to delete all remote files
+            <#[hashtable]$props = @{
+                WebPublishMethod = 'MSDeploy'
+                WebRoot = 'wwwroot'
+                SkipExtraFilesOnServer = $false
+                MSDeployServiceURL = ('{0}:443/msdeploy.axd' -f ($siteobj.SiteProperties.Properties|%{ if($_.Name -eq 'RepositoryUri'){$_.Value} }) )
+                DeployIisAppPath = ($siteobj.Name)
+                Username = ($siteobj.SiteProperties.Properties|%{ if($_.Name -eq 'PublishingUsername'){$_.Value} })
+                Password = ($siteobj.SiteProperties.Properties|%{ if($_.Name -eq 'PublishingPassword'){$_.Value} })
+            }#>
+            # C:\data\mycode\publishtests\publish-samples\0x-empty
+            [System.IO.DirectoryInfo]$emptyprojpath = (Join-Path ($global:publishsettings.PubSamplesRoot) '0x-empty')
+            Publish-AspNet -packOutput ($emptyprojpath.FullName) -publishProperties (InternalGet-PublishProperties)
         }
     }
 }
@@ -281,7 +286,7 @@ function Get-PublishReport{
             $result = ($current.Group.ElapsedTime|Measure-Object -Sum -Minimum -Maximum -Average|Select-Object -Property Average,Minimum,Maximum,Sum)
             #$current.Group
             [int]$numfiles = ($current.Group.NumFiles|Select-Object -First 1)
-            [int]$sizekb = ($current.Group.TotalSizeKB|Select-Object -First 1)
+            [int]$sizekb = ($current.Group.SizeKB|Select-Object -First 1)
 
             New-Object -TypeName psobject -Property @{
                 Testname = $current.Name
@@ -291,6 +296,64 @@ function Get-PublishReport{
                 TotalTimeAll = [int]$result.Sum
                 NumFiles = $numfiles
                 SizeKB = $sizekb
+            }
+        }
+    }
+}
+
+function Format-PublishReport{
+    [cmdletbinding()]
+    param(
+        [array]$allResults = (Get-PublishReport)
+    )
+    process{
+        $allResults | Select-Object TestName,NumFiles,SizeKB,AverageTime,MinimumTime,MaximumTime|ft -AutoSize
+    }
+}
+
+function get-standarddeviation {            
+    [CmdletBinding()]
+    param(
+        [Parameter(Position=0)]
+        [double[]]$numbers
+    )
+    begin{
+        $avg = 0;
+        $nums=@()
+    }
+    process{
+        
+        $nums += $numbers
+        $avg = ($nums | Measure-Object -Average).Average
+        $sum = 0;
+        $nums | ForEach-Object { $sum += ($avg - $_) * ($avg - $_) }
+        [Math]::Sqrt($sum / $nums.Length)
+    }
+}
+
+function Remove-OutliersFromData{
+    [cmdletbinding()]
+    param(
+        [array]$allresults = ($global:publishResults)
+    )
+    process{
+        # get the data into groups then for each group find and remove outliers
+        # $fromfile|Where-Object {$_.TestName -eq 'publish-default'}|Select-Object -ExpandProperty ElapsedTime|%{$diff=$avg-$_;if([Math]::Abs($diff) -gt (2*(589.12)) ){"$_ inside"}}
+
+        foreach($testname in ($allresults.TestName)){
+            $current = ($allresults|Where-Object {$_.TestName -eq $testname})
+
+            [double]$average = (($current|Select-Object -ExpandProperty ElapsedTime|Measure-Object -Average).Average)
+            #$stddev = get-standarddeviation ($current|Select-Object -ExpandProperty ElapsedTime)
+            foreach($item in $current){
+                # if the result in withing 2 standard deviations then output the result, otherwise filter it out
+                $difference = [Math]::Abs( $average - ($item.ElapsedTime))
+                if($difference -lt ($average*0.25)){
+                    $item
+                }
+                else{
+                    'Filtering outlier from results [{0}]' -f $current | Write-Verbose
+                }
             }
         }
     }
@@ -326,7 +389,7 @@ function Publish-FolderToSite{
             DeployIisAppPath = $iisAppPath
             Username = $username
             Password = $publishPassword
-        } | Write-Verbose | Out-Null
+        } | Write-Verbose
 
         $stopwatch.Stop() | Out-Null
 
@@ -335,7 +398,7 @@ function Publish-FolderToSite{
             TestName = [string]$testName
             ElapsedTime = ($stopwatch.ElapsedMilliseconds)
             NumFiles = ((Get-ChildItem $path -Recurse -File).Length)
-            TotalSizeKB =  (((Get-ChildItem $path -Recurse | Measure-Object -property length -sum).Sum)/1KB)
+            SizeKB =  (((Get-ChildItem $path -Recurse | Measure-Object -property length -sum).Sum)/1KB)
         }
 
         # return the result
