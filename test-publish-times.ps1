@@ -29,7 +29,7 @@ $scriptDir = ((InternalGet-ScriptDirectory) + "\")
 $global:publishsettings = New-Object -TypeName psobject -Property @{
     MinGeoffreyModuleVersion = '0.0.10.1'
     PubSamplesRoot = [System.IO.DirectoryInfo](Join-Path $scriptDir 'publish-samples')
-    NumIterations = 5
+    NumIterations = 10
     AzureSiteName = 'sayedpubdemo01'
 }
 
