@@ -16,7 +16,7 @@ param(
     [string]$azurepsapiversion = '2014-04-01-preview',
 
     [Parameter(ParameterSetName='default',Position=6)]
-    $numIterations = 25,
+    $numIterations = 10,
 
     [Parameter(ParameterSetName='default',Position=7)]
     [System.IO.DirectoryInfo]$logFolder,
@@ -305,6 +305,8 @@ function Publish-DnxSite{
                 continue
             }
 
+            Ensure-AzureWebsiteStarted -name ($siteobj.Name) | Write-Verbose
+
             [System.IO.FileInfo]$projpath = $siteobj.ProjectPath
             if($siteobj.ProjectType -eq 'DNX'){
                 'Publishing DNX project at [{0}] to [{1}]' -f $siteobj.projectpath,$siteobj.Name | Write-Verbose
@@ -342,7 +344,9 @@ function Publish-DnxSite{
                         Set-Location $projpath.Directory.FullName | Out-Null
                         # C:\Users\sayedha\.dnx\runtimes\dnx-clr-win-x86.1.0.0-beta5\bin\dnx.exe "C:\Users\sayedha\.dnx\runtimes\dnx-clr-win-x86.1.0.0-beta5\bin\lib\Microsoft.Framework.PackageManager\Microsoft.Framework.PackageManager.dll" restore "<proj-folder-path>"
                         $dnxexe = (Join-Path $dnxbin 'dnx.exe')
-                        [System.IO.FileInfo]$pkgmgrdll = (Join-Path $dnxbin 'lib\Microsoft.Framework.PackageManager\Microsoft.Framework.PackageManager.dll')
+                        #[System.IO.FileInfo]$pkgmgrdll = (Join-Path $dnxbin 'lib\Microsoft.Framework.PackageManager\Microsoft.Framework.PackageManager.dll')
+                        [System.IO.FileInfo]$pkgmgrdll = (Join-Path $dnxbin 'lib\Microsoft.Dnx.Tooling\Microsoft.Dnx.Tooling.dll')
+                        #Microsoft.Dnx.Tooling\Microsoft.Dnx.Tooling.dll
 
                         $restoreargs = @($pkgmgrdll.FullName,'restore',$projpath.Directory.FullName,'-f','"C:\Program Files (x86)\Microsoft Web Tools\DNU"')
                         if(-not [string]::IsNullOrWhiteSpace($siteobj.DnxFeed)){
@@ -361,7 +365,7 @@ function Publish-DnxSite{
                         # now publish from that folder to the remote azure site
                         [string]$username = ($siteobj.AzureSiteObj.SiteProperties.Properties|%{ if($_.Name -eq 'PublishingUsername'){$_.Value} })
                         [string]$pubpwd = ($siteobj.AzureSiteObj.SiteProperties.Properties|%{ if($_.Name -eq 'PublishingPassword'){$_.Value} })
-                        [string]$msdeployurl = ('{0}:443' -f ($siteobj.AzureSiteObj.SiteProperties.Properties|%{ if($_.Name -eq 'RepositoryUri'){$_.Value} }) )
+                        [string]$msdeployurl = ('{0}:443/msdeploy.axd' -f ($siteobj.AzureSiteObj.SiteProperties.Properties|%{ if($_.Name -eq 'RepositoryUri'){$_.Value} }) )
                         $pubproperties = @{'WebPublishMethod'='MSDeploy';'MSDeployServiceUrl'=$msdeployurl;'DeployIisAppPath'=$siteobj.Name;'Username'=$username;'Password'=$pubpwd;'WebRoot'='wwwroot';'SkipExtraFilesOnServer'=$false}
 
                         Publish-AspNet -packOutput ($tempfolder.FullName) -publishProperties $pubproperties
@@ -509,16 +513,36 @@ function Delete-RemoteSiteContent{
         foreach($siteobj in $site){
             $azuresite = $siteobj.AzureSiteObj
             'Deleting files for site [{0}]' -f $azuresite.Name | Write-Verbose
-            # first stop the site
+            
+            # first stop the site            
             Ensure-AzureWebsiteStopped -Name ($azuresite.Name)
-
-            # msdeploy.exe -verb:delete -dest:contentPath=sayed03/,ComputerName='https://sayed03.scm.azurewebsites.net/msdeploy.axd',UserName='$sayed03',Password='%pubpwd%',IncludeAcls='False',AuthType='Basic' -whatif
-            $username = ($azuresite.SiteProperties.Properties|%{ if($_.Name -eq 'PublishingUsername'){$_.Value} })
-            $pubpwd = ($azuresite.SiteProperties.Properties|%{ if($_.Name -eq 'PublishingPassword'){$_.Value} })
-            $msdeployurl = ('{0}/msdeploy.axd' -f ($azuresite.SiteProperties.Properties|%{ if($_.Name -eq 'RepositoryUri'){$_.Value} }) )
-            $destarg = ('contentPath={0}/,ComputerName=''{1}'',UserName=''{2}'',Password=''{3}'',IncludeAcls=''False'',AuthType=''Basic''' -f $azuresite.Name, $msdeployurl, $username,$pubpwd )
-            $msdeployargs = @('-verb:delete',('-dest:{0}' -f $destarg),'-retryAttempts:3')
-            Invoke-CommandString -command (Get-MSDeploy) -commandArgs $msdeployargs
+            '1######'|Write-Host -ForegroundColor Red
+            if($siteobj.ProjectType -eq 'WAP'){
+                '2######'|Write-Host -ForegroundColor Red
+                # msdeploy.exe -verb:delete -dest:contentPath=sayed03/,ComputerName='https://sayed03.scm.azurewebsites.net/msdeploy.axd',UserName='$sayed03',Password='%pubpwd%',IncludeAcls='False',AuthType='Basic' -whatif
+                $username = ($azuresite.SiteProperties.Properties|%{ if($_.Name -eq 'PublishingUsername'){$_.Value} })
+                $pubpwd = ($azuresite.SiteProperties.Properties|%{ if($_.Name -eq 'PublishingPassword'){$_.Value} })
+                $msdeployurl = ('{0}/msdeploy.axd' -f ($azuresite.SiteProperties.Properties|%{ if($_.Name -eq 'RepositoryUri'){$_.Value} }) )
+                $destarg = ('contentPath={0}/,ComputerName=''{1}'',UserName=''{2}'',Password=''{3}'',IncludeAcls=''False'',AuthType=''Basic''' -f $azuresite.Name, $msdeployurl, $username,$pubpwd )
+                $msdeployargs = @('-verb:delete',('-dest:{0}' -f $destarg),'-retryAttempts:3')
+                Invoke-CommandString -command (Get-MSDeploy) -commandArgs $msdeployargs
+            }
+            else{
+                '*********************'|Write-Host -ForegroundColor Red
+                Ensure-AzureWebsiteStarted -Name ($azuresite.Name)
+                'Deleting remote content for site [{0}]' -f ($azuresite.Name) | Write-Verbose
+                [System.IO.DirectoryInfo]$emptyprojpath = (Join-Path $scriptDir 'publish-samples\0x-empty')
+                [hashtable]$props = @{
+                    WebPublishMethod = 'MSDeploy'
+                    WebRoot = 'wwwroot'
+                    SkipExtraFilesOnServer = $false
+                    MSDeployServiceURL = ('{0}:443/msdeploy.axd' -f ($azuresite.SiteProperties.Properties|%{ if($_.Name -eq 'RepositoryUri'){$_.Value} }) )
+                    DeployIisAppPath = ($azuresite.Name)
+                    Username = ($azuresite.SiteProperties.Properties|%{ if($_.Name -eq 'PublishingUsername'){$_.Value} })
+                    Password = ($azuresite.SiteProperties.Properties|%{ if($_.Name -eq 'PublishingPassword'){$_.Value} })
+                }
+                Publish-AspNet -packOutput ($emptyprojpath.FullName) -publishProperties $props
+            }
         }
     }
 }
@@ -926,19 +950,22 @@ function CreateReport{
 [System.IO.FileInfo]$samplewapproj = (Join-Path $scriptDir 'samples\src\WapMvc46\WapMvc46.csproj')
 [System.IO.FileInfo]$samplednxproj = (Join-Path $scriptDir 'samples\src\DnxWebApp\DnxWebApp.xproj')
 [System.IO.FileInfo]$samplebeta5xproj = (Join-Path $scriptDir 'samples\src\DnxWebBeta5\DnxWebBeta5.xproj')
+[System.IO.FileInfo]$samplebeta7xproj = (Join-Path $scriptDir 'samples\src\DnxWebBeta7\DnxWebBeta7.xproj')
 
 $sites = @(
     New-SiteObject -name pub-wap -projectpath $samplewapproj -projectType WAP -SolutionRoot ($samplewapproj.Directory.Parent.Parent.FullName)
 
-    New-SiteObject -name pubdnx-beta4-clr-withsource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $true  -dnxversion 1.0.0-beta4 -dnxfeed '"C:\Program Files (x86)\Microsoft Web Tools\DNU"'
-    New-SiteObject -name pubdnx-beta4-coreclr-withsource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $true  -dnxversion 1.0.0-beta4  -dnxfeed '"C:\Program Files (x86)\Microsoft Web Tools\DNU"'
-    New-SiteObject -name pubdnx-beta4-clr-nosource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false  -dnxversion 1.0.0-beta4  -dnxfeed '"C:\Program Files (x86)\Microsoft Web Tools\DNU"'
-    New-SiteObject -name pubdnx-beta4-coreclr-nosource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $false  -dnxversion 1.0.0-beta4  -dnxfeed '"C:\Program Files (x86)\Microsoft Web Tools\DNU"'
+    New-SiteObject -name pubdnx-beta7-clr-with-source -projectpath $samplebeta7xproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false -dnxversion 1.0.0-beta7
 
-    New-SiteObject -name pubdnx-beta5-clr-withsource -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $true -dnxversion 1.0.0-beta5  -dnxfeed '"C:\Program Files (x86)\Microsoft Web Tools\DNU"'
-    New-SiteObject -name pubdnx-beta5-coreclr-withsource -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $true -dnxversion 1.0.0-beta5 -dnxfeed '"C:\Program Files (x86)\Microsoft Web Tools\DNU"'
-    New-SiteObject -name pubdnx-beta5-clr-nosource -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false -dnxversion 1.0.0-beta5 -dnxfeed '"C:\Program Files (x86)\Microsoft Web Tools\DNU"'
-    New-SiteObject -name pubdnx-beta5-coreclr-nosource -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false -dnxversion 1.0.0-beta5 -dnxfeed '"C:\Program Files (x86)\Microsoft Web Tools\DNU"'
+    #New-SiteObject -name pubdnx-beta4-clr-withsource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $true  -dnxversion 1.0.0-beta4 -dnxfeed '"C:\Program Files (x86)\Microsoft Web Tools\DNU"'
+    #New-SiteObject -name pubdnx-beta4-coreclr-withsource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $true  -dnxversion 1.0.0-beta4  -dnxfeed '"C:\Program Files (x86)\Microsoft Web Tools\DNU"'
+    #New-SiteObject -name pubdnx-beta4-clr-nosource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false  -dnxversion 1.0.0-beta4  -dnxfeed '"C:\Program Files (x86)\Microsoft Web Tools\DNU"'
+    #New-SiteObject -name pubdnx-beta4-coreclr-nosource -projectpath $samplednxproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $false  -dnxversion 1.0.0-beta4  -dnxfeed '"C:\Program Files (x86)\Microsoft Web Tools\DNU"'
+    
+    #New-SiteObject -name pubdnx-beta5-clr-withsource -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $true -dnxversion 1.0.0-beta5  -dnxfeed '"C:\Program Files (x86)\Microsoft Web Tools\DNU"'
+    #New-SiteObject -name pubdnx-beta5-coreclr-withsource -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime coreclr -dnxpublishsource $true -dnxversion 1.0.0-beta5 -dnxfeed '"C:\Program Files (x86)\Microsoft Web Tools\DNU"'
+    #New-SiteObject -name pubdnx-beta5-clr-nosource -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false -dnxversion 1.0.0-beta5 -dnxfeed '"C:\Program Files (x86)\Microsoft Web Tools\DNU"'
+    #New-SiteObject -name pubdnx-beta5-coreclr-nosource -projectpath $samplebeta5xproj -projectType DNX -dnxbitness x86 -dnxruntime clr -dnxpublishsource $false -dnxversion 1.0.0-beta5 -dnxfeed '"C:\Program Files (x86)\Microsoft Web Tools\DNU"'
 )
 
 if($stopSites){
@@ -975,7 +1002,7 @@ else
         $sites | Populate-AzureWebSiteObjects
 
         if(-not $skipPublish){
-            $sites | Delete-RemoteSiteContent
+            # $sites | Delete-RemoteSiteContent
             $sites | Publish-Site
         }
 
@@ -987,7 +1014,7 @@ else
         $result
 
         # write out a summary at the end
-        $result | Select-Object Name,AverageFirstRequestResponseTime,AverageSecondRequestResponseTime, ClientAverageFirstRequestResponseTime,ClientAverageSecondRequestResponseTime | Format-Table | Out-String | Write-Host -ForegroundColor Green
+        $result | Select-Object Name,AverageFirstRequestResponseTime,AverageSecondRequestResponseTime, ClientAverageFirstRequestResponseTime,ClientAverageSecondRequestResponseTime | Format-Table | Out-String
 
         $endtime = Get-Date
         'End time: [{0}]. Time spent [{1}] seconds' -f $endtime.ToString('hh:mm:ss tt'),($endtime - $starttime).TotalSeconds | Write-Verbose
