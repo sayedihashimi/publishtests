@@ -73,6 +73,8 @@ task default -dependsOn stop-all-sites,publish-default,publish-no-source,publish
 
 task init {
     requires -nameorurl publish-module -version 1.0.2-beta1 -noprefix
+    requires -nameorurl psbuild -version '1.1.5-beta' -noprefix -condition (-not (Get-Command -Module psbuild -Name Invoke-MSBuild -ErrorAction SilentlyContinue) )
+    # requires 'https://raw.githubusercontent.com/ligershark/psbuild/master/src/GetPSBuild.ps1' -condition (-not (Get-Command -Module psbuild -Name Invoke-MSBuild -ErrorAction SilentlyContinue) )
 }
 
 task stop-all-sites {
@@ -136,6 +138,12 @@ task publish-no-source-no-extra-client-files-no-runtime-no-pkgs{
 
 } -dependsOn stop-all-sites
 
+task wap-01-2013rtm {
+
+    [System.IO.DirectoryInfo]$path = (Join-Path ($global:publishsettings.PubSamplesRoot) 'wap-01-2013rtm')
+    InternalExecute-Test -testName 'publish-no-source-no-extra-client-files-no-runtime-no-pkgs' -path $path -publishType wap -wapProjectPath (Join-Path $path 'src\Wap2013RTM.csproj')
+}
+
 task print-results{
     $global:publishResults | Write-Host -ForegroundColor Cyan
     Get-PublishReport -allresults $global:publishResults | Select-Object TestName,NumFiles,SizeKB,AverageTime,MinimumTime,MaximumTime|ft -AutoSize
@@ -166,7 +174,14 @@ function InternalExecute-Test{
 
         [Parameter(Position=2)]
         [ValidateNotNull()]
-        [hashtable]$publishProperties = (InternalGet-PublishProperties)
+        [hashtable]$publishProperties = (InternalGet-PublishProperties),
+
+        [Parameter(Position=3)]
+        [ValidateSet('dnx','wap')]
+        [string]$publishType = 'dnx',
+
+        [Parameter(Position=4)]
+        [System.IO.FileInfo]$wapProjectPath
     )
     process{
 
@@ -175,8 +190,23 @@ function InternalExecute-Test{
         for($i = 0;$i -lt ($global:publishsettings.NumIterations);$i++){
             Delete-RemoteSiteContent -publishProperties $pubProps | Write-Verbose
             Start-Sleep -Seconds 1
-            $pubresult = (Publish-FolderToSite -testName $testName -path ($path.FullName) -publishProperties $pubProps)
 
+            $pubresult = $null
+            switch ($publishType){
+                'dnx' { 
+                    $pubresult = (Publish-FolderToSite -testName $testName -path ($path.FullName) -publishProperties $pubProps) 
+                }
+                
+                'wap' { 
+                    InternalAssert-NotEmpty -name 'wapProjectPath' -value $wapProjectPath
+                    $pubresult = (Publish-WapProject -projectPath $wapProjectPath -publishProperties $pubProps)
+                }
+                
+                default {
+                    throw ('Unknown value for publishType [{0}]' -f $publishType)
+                }
+            }
+            
             $global:publishResults += $pubresult
         }
     }
@@ -219,6 +249,23 @@ function Invoke-CommandString{
     }
 }
 
+function InternalAssert-NotEmpty{
+    [cmdletbinding()]
+    param(
+        [Parameter(Position=0,Mandatory=$true)]
+        [string]$name,
+
+        [Parameter(Position=1,Mandatory=$true)]
+        [AllowNull()]
+        $value
+    )
+    process{
+        if($value -eq $null){
+            throw ('{0} is null' -f $name)
+        }
+    }
+}
+
 function Delete-RemoteSiteContent{
     [cmdletbinding()]
     param(
@@ -229,16 +276,6 @@ function Delete-RemoteSiteContent{
         foreach($props in $publishProperties){
             'Deleting remote content for site [{0}]' -f ($props.DeployIisAppPath) | Write-Verbose
             # publish an empty app to delete all remote files
-            <#[hashtable]$props = @{
-                WebPublishMethod = 'MSDeploy'
-                WebRoot = 'wwwroot'
-                SkipExtraFilesOnServer = $false
-                MSDeployServiceURL = ('{0}:443/msdeploy.axd' -f ($siteobj.SiteProperties.Properties|%{ if($_.Name -eq 'RepositoryUri'){$_.Value} }) )
-                DeployIisAppPath = ($siteobj.Name)
-                Username = ($siteobj.SiteProperties.Properties|%{ if($_.Name -eq 'PublishingUsername'){$_.Value} })
-                Password = ($siteobj.SiteProperties.Properties|%{ if($_.Name -eq 'PublishingPassword'){$_.Value} })
-            }#>
-            # C:\data\mycode\publishtests\publish-samples\0x-empty
             [System.IO.DirectoryInfo]$emptyprojpath = (Join-Path ($global:publishsettings.PubSamplesRoot) '0x-empty')
             Publish-AspNet -packOutput ($emptyprojpath.FullName) -publishProperties (InternalGet-PublishProperties)
         }
@@ -265,6 +302,7 @@ function InternalGet-PublishProperties{
                 DeployIisAppPath = ($siteobj.Name)
                 Username = ($siteobj.SiteProperties.Properties|%{ if($_.Name -eq 'PublishingUsername'){$_.Value} })
                 Password = ($siteobj.SiteProperties.Properties|%{ if($_.Name -eq 'PublishingPassword'){$_.Value} })
+                Sitename = ($sitename)
             }
 
             $script:pubProps = $props
@@ -369,7 +407,7 @@ function Publish-FolderToSite{
         [System.IO.DirectoryInfo]$path,
 
         [Parameter(Position=2,Mandatory=$true)]
-        $publishProperties
+        [hashtable]$publishProperties
     )
     process{
         [string]$msdeployUrl = $publishProperties.MSDeployServiceUrl
@@ -405,3 +443,76 @@ function Publish-FolderToSite{
         $result
     }
 }
+
+$pubxmltemplate = @'
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <MSDeployServiceURL>{0}</MSDeployServiceURL>
+    <DeployIisAppPath>{1}</DeployIisAppPath>
+    <UserName>{2}</UserName>
+	<WebPublishMethod>MSDeploy</WebPublishMethod>
+	<SkipExtraFilesOnServer>True</SkipExtraFilesOnServer>
+    <MSDeployPublishMethod>WMSVC</MSDeployPublishMethod>
+  </PropertyGroup>
+</Project>
+'@
+function Publish-WapProject{
+    [cmdletbinding()]
+    param(
+        [Parameter(Position=0,Mandatory=$true)]
+        [ValidateNotNull()]
+        [System.IO.FileInfo]$projectPath,
+
+        [Parameter(Position=0,Mandatory=$true)]
+        [hashtable]$publishProperties
+    )
+    process{
+        [string]$sitename = $publishProperties['Sitename']
+        'Publishing WAP project at [{0}] to [{1}]' -f $projectPath.FullName, $sitename | Write-Verbose
+
+        try{
+            Push-Location | Out-Null
+            Set-Location ($projectPath.Directory.FullName) | Out-Null
+            'Restoring nuget packages for sln root [{0}]' -f ($projectPath.Directory.FullName) | Write-Verbose
+            [System.IO.DirectoryInfo]$pkgsdir = (Join-Path ($projectPath.Directory.FullName) '..\packages')
+            if(-not (Test-Path $pkgsdir)){
+                New-Item -ItemType Directory -Path $pkgsdir | out-null
+            }
+            Invoke-CommandString -command (Get-Nuget) -commandArgs @('restore','-PackagesDirectory',($pkgsdir.FullName)) | Out-Null
+        }
+        finally{
+            Pop-Location | Out-Null
+        }
+
+        # create a .pubxml file for the site and then call msbuild.exe to build & publish
+        [string]$username = $publishProperties['Username']
+        [string]$pubpwd = $publishProperties['Password']
+        [string]$msdeployurl = $publishProperties['MSDeployServiceURL']
+        InternalAssert-NotEmpty -name username -value $username | Out-Null
+        InternalAssert-NotEmpty -name password -value $pubpwd | Out-Null
+        InternalAssert-NotEmpty -name msdeployurl -value $msdeployurl | Out-Null
+
+        [System.IO.FileInfo]$temppubxmlpath = [System.IO.Path]::GetTempFileName()
+        $pubxmltemplate -f $msdeployurl,$sitename,$username | Out-File -FilePath ($temppubxmlpath.FullName) -Encoding ascii
+
+        [System.Diagnostics.Stopwatch]$stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+        Invoke-MSBuild -projectsToBuild ($projectPath.FullName) -visualStudioVersion 14.0 -deployOnBuild $true -publishProfile ($temppubxmlpath.FullName) -password $pubpwd -noLogFiles -nologo
+
+        $stopwatch.Stop() | Out-Null
+
+        [System.IO.DirectoryInfo]$puboutputpath = (Join-Path $projectPath.Directory.FullName '..\publish-output')
+
+        # return the results
+        $result = New-Object -TypeName psobject -Property @{
+            TestName = [string]$testName
+            ElapsedTime = ($stopwatch.ElapsedMilliseconds)
+            NumFiles = ((Get-ChildItem $puboutputpath -Recurse -File).Length)
+            SizeKB =  (((Get-ChildItem $puboutputpath -Recurse | Measure-Object -property length -sum).Sum)/1KB)
+        }
+
+        # return the result
+        $result
+    }
+}
+
