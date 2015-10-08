@@ -69,7 +69,7 @@ Ensure-GeoffreyLoaded
 
 [array]$global:publishResults = @()
 
-task default -dependsOn stop-all-sites,publish-default,publish-no-source,publish-no-pkgs,publish-no-runtime,publish-no-runtime-no-pkgs,publish-no-extra-client-files,publish-no-extra-client-files-no-runtime-no-pkgs,publish-no-source-no-extra-client-files-no-runtime-no-pkgs,print-results
+task default -dependsOn stop-all-sites,publish-default,publish-no-source,publish-no-pkgs,publish-no-runtime,publish-no-runtime-no-pkgs,publish-no-extra-client-files,publish-no-extra-client-files-no-runtime-no-pkgs,publish-no-source-no-extra-client-files-no-runtime-no-pkgs,wap-01-2013rtm, wap-02-2013rtmu5, wap-03-2015rtm,print-results
 
 task init {
     requires -nameorurl publish-module -version 1.0.2-beta1 -noprefix
@@ -138,14 +138,29 @@ task publish-no-source-no-extra-client-files-no-runtime-no-pkgs{
 
 } -dependsOn stop-all-sites
 
+
+task wap-all -dependsOn wap-01-2013rtm, wap-02-2013rtmu5, wap-03-2015rtm
+
 task wap-01-2013rtm {
 
     [System.IO.DirectoryInfo]$path = (Join-Path ($global:publishsettings.PubSamplesRoot) 'wap-01-2013rtm')
-    InternalExecute-Test -testName 'publish-no-source-no-extra-client-files-no-runtime-no-pkgs' -path $path -publishType wap -wapProjectPath (Join-Path $path 'src\Wap2013RTM.csproj')
+    InternalExecute-Test -testName 'wap-01-2013rtm' -path $path -publishType wap -wapProjectPath (Join-Path $path 'src\Wap2013RTM.csproj')
+}
+
+task wap-02-2013rtmu5 {
+
+    [System.IO.DirectoryInfo]$path = (Join-Path ($global:publishsettings.PubSamplesRoot) 'wap-02-2013rtmu5')
+    InternalExecute-Test -testName 'wap-02-2013rtmu5' -path $path -publishType wap -wapProjectPath (Join-Path $path 'src\Wap2013U5.csproj')
+}
+
+task wap-03-2015rtm {
+
+    [System.IO.DirectoryInfo]$path = (Join-Path ($global:publishsettings.PubSamplesRoot) 'wap-03-2015rtm')
+    InternalExecute-Test -testName 'wap-03-2015rtm' -path $path -publishType wap -wapProjectPath (Join-Path $path 'src\Wap2015.csproj')
 }
 
 task print-results{
-    $global:publishResults | Write-Host -ForegroundColor Cyan
+    $global:publishResults | Write-Output
     Get-PublishReport -allresults $global:publishResults | Select-Object TestName,NumFiles,SizeKB,AverageTime,MinimumTime,MaximumTime|ft -AutoSize
 }
 
@@ -494,10 +509,10 @@ function Publish-WapProject{
         InternalAssert-NotEmpty -name msdeployurl -value $msdeployurl | Out-Null
 
         [System.IO.FileInfo]$temppubxmlpath = [System.IO.Path]::GetTempFileName()
-        $pubxmltemplate -f $msdeployurl,$sitename,$username | Out-File -FilePath ($temppubxmlpath.FullName) -Encoding ascii
+        $pubxmltemplate -f $msdeployurl,$sitename,$username | Out-File -FilePath ($temppubxmlpath.FullName) -Encoding ascii | Out-Null
 
         [System.Diagnostics.Stopwatch]$stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-        Invoke-MSBuild -projectsToBuild ($projectPath.FullName) -visualStudioVersion 14.0 -deployOnBuild $true -publishProfile ($temppubxmlpath.FullName) -password $pubpwd -noLogFiles -nologo
+        Invoke-MSBuild -projectsToBuild ($projectPath.FullName) -visualStudioVersion 14.0 -deployOnBuild $true -publishProfile ($temppubxmlpath.FullName) -password $pubpwd -noLogFiles -nologo | Write-Verbose
 
         $stopwatch.Stop() | Out-Null
 
