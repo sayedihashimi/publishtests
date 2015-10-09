@@ -393,7 +393,7 @@ function Remove-OutliersFromData{
         # get the data into groups then for each group find and remove outliers
         # $fromfile|Where-Object {$_.TestName -eq 'publish-default'}|Select-Object -ExpandProperty ElapsedTime|%{$diff=$avg-$_;if([Math]::Abs($diff) -gt (2*(589.12)) ){"$_ inside"}}
 
-        foreach($testname in ($allresults.TestName)){
+        foreach($testname in ($allresults|Select-Object -ExpandProperty TestName -Unique)){
             $current = ($allresults|Where-Object {$_.TestName -eq $testname})
 
             [double]$average = (($current|Select-Object -ExpandProperty ElapsedTime|Measure-Object -Average).Average)
