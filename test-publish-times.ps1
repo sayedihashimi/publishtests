@@ -29,7 +29,7 @@ $scriptDir = ((InternalGet-ScriptDirectory) + "\")
 $global:publishsettings = New-Object -TypeName psobject -Property @{
     MinGeoffreyModuleVersion = '0.0.10.1'
     PubSamplesRoot = [System.IO.DirectoryInfo](Join-Path $scriptDir 'publish-samples')
-    NumIterations = 10
+    NumIterations = 25
     AzureSiteName = 'sayedpubdemo01'
 }
 
@@ -511,6 +511,13 @@ function Publish-WapProject{
         [System.IO.FileInfo]$temppubxmlpath = [System.IO.Path]::GetTempFileName()
         $pubxmltemplate -f $msdeployurl,$sitename,$username | Out-File -FilePath ($temppubxmlpath.FullName) -Encoding ascii | Out-Null
 
+        # delete bin/obj folder so that it's a clean build + publish
+        [System.IO.DirectoryInfo[]]$foldersToDelete = (Get-ChildItem $projectPath.Directory -Include bin,obj -Directory -Recurse)
+        foreach($path in $foldersToDelete){
+            if(test-path $path){
+                Remove-Item $path -Recurse -Force #| Out-Null
+            }
+        }
         [System.Diagnostics.Stopwatch]$stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
         Invoke-MSBuild -projectsToBuild ($projectPath.FullName) -visualStudioVersion 14.0 -deployOnBuild $true -publishProfile ($temppubxmlpath.FullName) -password $pubpwd -noLogFiles -nologo | Write-Verbose
 
